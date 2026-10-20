@@ -1,0 +1,38 @@
+{
+  "name": "recall-backend",
+  "version": "1.0.0",
+  "description": "Backend API for Recall – AI study companion with multimodal RAG",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.21.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "jszip": "^3.10.2",
+    "mammoth": "^1.13.0",
+    "minisearch": "^7.1.1",
+    "multer": "^1.4.5-lts.1",
+    "pdf-parse": "^1.1.1",
+    "uuid": "^10.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jszip": "^3.4.1",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^20.17.0",
+    "@types/supertest": "^6.0.2",
+    "@types/uuid": "^10.0.0",
+    "supertest": "^7.0.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

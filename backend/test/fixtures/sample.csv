@@ -1,0 +1,4 @@
+id,concept,definition
+1,Gradient Descent,Iterative optimization algorithm for finding the local minimum of a differentiable function
+2,Backpropagation,Algorithm for computing gradients of network parameters via chain rule
+3,Overfitting,When a statistical model fits noise instead of the underlying distribution

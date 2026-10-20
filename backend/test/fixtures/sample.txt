@@ -1,0 +1,4 @@
+Machine Learning Foundations
+Supervised learning requires labeled training datasets.
+Unsupervised learning discovers latent patterns without ground-truth labels.
+Reinforcement learning optimizes an agent's policy via environment rewards.

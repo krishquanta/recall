@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<studyGuide>
+  <subject name="Computer Science">
+    <topic>Data Structures</topic>
+    <description>Binary search trees provide logarithmic search and insertion time.</description>
+  </subject>
+</studyGuide>

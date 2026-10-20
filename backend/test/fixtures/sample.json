@@ -1,0 +1,8 @@
+{
+  "topic": "Machine Learning",
+  "algorithms": [
+    { "name": "Random Forest", "type": "Ensemble" },
+    { "name": "Support Vector Machine", "type": "Linear / Kernel" }
+  ],
+  "metrics": ["Accuracy", "F1-Score", "ROC-AUC"]
+}
