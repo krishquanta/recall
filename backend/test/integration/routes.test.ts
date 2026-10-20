@@ -70,4 +70,29 @@ describe('API Routes Integration', () => {
     expect(res.body.status).toBeDefined();
     expect(res.body.status.stage).toBe('pending');
   });
+
+  it('GET /api/graph should return graph nodes, edges and summary', async () => {
+    const res = await request(app).get('/api/graph');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.nodes)).toBe(true);
+    expect(Array.isArray(res.body.edges)).toBe(true);
+    expect(Array.isArray(res.body.claims)).toBe(true);
+    expect(res.body.summary).toBeDefined();
+    expect(typeof res.body.summary.totalNodes).toBe('number');
+  });
+
+  it('GET /api/graph/review-queue should return review queue items', async () => {
+    const res = await request(app).get('/api/graph/review-queue');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.items)).toBe(true);
+    expect(typeof res.body.count).toBe('number');
+  });
+
+  it('POST /api/graph/review-queue/:id/resolve should validate resolution action', async () => {
+    const res = await request(app)
+      .post('/api/graph/review-queue/invalid-id/resolve')
+      .send({ action: 'invalid-action' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('Field "action" is required');
+  });
 });

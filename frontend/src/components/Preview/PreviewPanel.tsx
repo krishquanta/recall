@@ -150,8 +150,8 @@ export const PreviewPanel: React.FC = () => {
               </div>
 
               {quoteText ? (
-                <div className="relative pl-3 border-l-2 border-indigo-500">
-                  <div className="text-xs text-slate-700 leading-relaxed italic select-text">
+                <div className="relative bg-amber-100/70 border-l-4 border-amber-500 pl-3.5 py-2.5 rounded-r-md font-serif">
+                  <div className="text-xs text-slate-800 leading-relaxed italic select-text">
                     <MathContent content={quoteText} />
                   </div>
                 </div>

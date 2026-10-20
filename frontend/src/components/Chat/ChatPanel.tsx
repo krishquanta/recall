@@ -2,6 +2,7 @@ import React from 'react';
 import { DocScopeFilter } from './DocScopeFilter';
 import { MessageList } from './MessageList';
 import { InputBar } from './InputBar';
+import { ViewModeSelector } from '../Header/ViewModeSelector';
 import { useAppStore } from '../../store/appStore';
 import { PanelLeft, PanelRight, Trash2, GraduationCap } from 'lucide-react';
 
@@ -37,7 +38,7 @@ export const ChatPanel: React.FC = () => {
             <div className="w-7 h-7 rounded-lg bg-indigo-600 text-white flex items-center justify-center shadow-xs">
               <GraduationCap className="w-4 h-4" />
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 hidden md:block">
               <h1 className="text-sm font-bold text-slate-900 tracking-tight leading-tight truncate">
                 Recall
               </h1>
@@ -47,6 +48,9 @@ export const ChatPanel: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* View Mode Selector in center header */}
+        <ViewModeSelector />
 
         {/* Action Controls */}
         <div className="flex items-center gap-1.5">

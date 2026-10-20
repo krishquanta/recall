@@ -9,9 +9,12 @@ import { uploadRouter } from './routes/upload';
 import { documentsRouter } from './routes/documents';
 import { searchRouter } from './routes/search';
 import { askRouter } from './routes/ask';
+import { graphRouter, extractAndStoreGraphForChunks } from './routes/graph';
 import { metadataStore } from './store/MetadataStore';
 import { vectorStore } from './store/VectorStore';
 import { keywordIndex } from './store/KeywordIndex';
+import { graphStore } from './store/GraphStore';
+import { reviewStore } from './store/ReviewStore';
 import { statusEmitter } from './routes/upload';
 import { ProcessingStatus } from './types';
 
@@ -43,6 +46,50 @@ try {
   }
 } catch (rehydrateErr) {
   console.warn('Could not rehydrate keyword index:', rehydrateErr);
+}
+
+// Rehydrate GraphStore & ReviewStore on server startup
+try {
+  graphStore.loadSync();
+  reviewStore.loadSync();
+  const summary = graphStore.getAll();
+  console.log(`Loaded knowledge graph: ${summary.nodes.length} nodes, ${summary.edges.length} edges, ${summary.claims.length} claims.`);
+} catch (graphLoadErr) {
+  console.warn('Could not load graph stores:', graphLoadErr);
+}
+
+// Background backfill: silently index documents in metadataStore lacking graph data
+if (process.env.NODE_ENV !== 'test') {
+  setTimeout(async () => {
+    try {
+      const allDocs = metadataStore.getAll().filter((d) => d.status?.stage === 'done');
+      const allGraph = graphStore.getAll();
+      const existingDocIds = new Set<string>();
+
+      for (const node of allGraph.nodes) {
+        for (const ev of node.evidence || []) {
+          existingDocIds.add(ev.docId);
+        }
+      }
+      for (const edge of allGraph.edges) {
+        if (edge.evidence?.docId) {
+          existingDocIds.add(edge.evidence.docId);
+        }
+      }
+
+      for (const doc of allDocs) {
+        if (!existingDocIds.has(doc.docId)) {
+          const chunks = keywordIndex.getChunksByDocId(doc.docId);
+          if (chunks.length > 0) {
+            console.log(`Backfilling knowledge graph for document ${doc.filename} (${doc.docId})...`);
+            await extractAndStoreGraphForChunks(chunks);
+          }
+        }
+      }
+    } catch (backfillErr) {
+      console.warn('Background graph backfill error:', backfillErr);
+    }
+  }, 1000);
 }
 
 // Health check
@@ -118,6 +165,7 @@ app.use('/api/upload', uploadRouter);
 app.use('/api/documents', documentsRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/ask', askRouter);
+app.use('/api/graph', graphRouter);
 
 // Global Error Handler
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

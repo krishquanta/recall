@@ -4,6 +4,9 @@ import { DocumentList } from './components/Sidebar/DocumentList';
 import { ChatPanel } from './components/Chat/ChatPanel';
 import { PreviewPanel } from './components/Preview/PreviewPanel';
 import { StatusToast } from './components/StatusToast';
+import { GraphCanvas } from './components/Graph/GraphCanvas';
+import { ChatHeaderWithViewSelector } from './components/Header/ChatHeaderWithViewSelector';
+import { ReviewQueueModal } from './components/Graph/ReviewQueueModal';
 import { useAppStore } from './store/appStore';
 import { BookOpen, X } from 'lucide-react';
 import clsx from 'clsx';
@@ -12,11 +15,15 @@ export const App: React.FC = () => {
   const sidebarOpen = useAppStore((state) => state.sidebarOpen);
   const setSidebarOpen = useAppStore((state) => state.setSidebarOpen);
   const previewOpen = useAppStore((state) => state.previewOpen);
+  const activeView = useAppStore((state) => state.activeView);
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-slate-100 text-slate-800 antialiased font-sans select-none">
       {/* Toast notifications container */}
       <StatusToast />
+
+      {/* Global Review Queue Modal */}
+      <ReviewQueueModal />
 
       {/* Mobile Sidebar Backdrop */}
       {sidebarOpen && (
@@ -64,7 +71,7 @@ export const App: React.FC = () => {
 
         {/* Sidebar Footer info */}
         <div className="p-3 border-t border-slate-100 bg-slate-50/50 text-[10px] text-slate-400 flex items-center justify-between">
-          <span>v1.0 · Recall</span>
+          <span>v2.0 · Knowledge Graph</span>
           <span className="text-emerald-600 font-medium flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
             Online
@@ -72,8 +79,15 @@ export const App: React.FC = () => {
         </div>
       </aside>
 
-      {/* Panel 2: Chat Center Panel (flex-1) */}
-      <ChatPanel />
+      {/* Panel 2: Center Panel (Chat or Knowledge Graph) */}
+      {activeView === 'chat' ? (
+        <ChatPanel />
+      ) : (
+        <div className="flex-1 flex flex-col h-full min-w-0 overflow-hidden">
+          <ChatHeaderWithViewSelector />
+          <GraphCanvas />
+        </div>
+      )}
 
       {/* Panel 3: Source Preview Panel (380px wide) */}
       {previewOpen && <PreviewPanel />}

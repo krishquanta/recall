@@ -1,5 +1,6 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Citation, RankedChunk } from '../types';
+import { graphStore } from '../store/GraphStore';
 
 export class LLMService {
   private genAI: GoogleGenerativeAI | null = null;
@@ -27,7 +28,7 @@ export class LLMService {
   }
 
   /**
-   * Generates an answer to the question grounded exclusively in the retrieved chunks.
+   * Generates an answer to the question grounded in the retrieved chunks and knowledge graph.
    * Extracts and returns structured citations mapped to chunk metadata.
    */
   public async generateAnswer(
@@ -44,7 +45,7 @@ export class LLMService {
     const genAI = this.getGenAI();
     const modelName = process.env.LLM_MODEL || 'gemini-3.8-flash';
 
-    // Format context chunks with 1-based indexing [1], [2], ...
+    // 1. Format context chunks with 1-based indexing [1], [2], ...
     const contextFormatted = chunks
       .map((c, i) => {
         const idx = i + 1;
@@ -59,7 +60,44 @@ export class LLMService {
       })
       .join('\n\n');
 
-    const systemInstruction = `You are a helpful, intelligent, and precise academic tutor. Answer the user's question accurately using ONLY the provided context chunks.
+    // 2. Query GraphStore for 1-hop subgraph matching relevant entities in chunks/question
+    let graphContextFormatted = '';
+    try {
+      const allGraph = graphStore.getAll();
+      const combinedText = `${question} ${chunks.map((c) => c.text).join(' ')}`.toLowerCase();
+      const matchedEntityIds: string[] = [];
+
+      for (const node of allGraph.nodes) {
+        if (node.status === 'merged') continue;
+        const nodeNameLower = node.name.toLowerCase();
+        if (combinedText.includes(nodeNameLower)) {
+          matchedEntityIds.push(node.id);
+        } else if (node.aliases?.some((a) => combinedText.includes(a.toLowerCase()))) {
+          matchedEntityIds.push(node.id);
+        }
+      }
+
+      if (matchedEntityIds.length > 0) {
+        const subgraph = graphStore.getSubgraph(matchedEntityIds, 1);
+        const nodeMap = new Map(subgraph.nodes.map((n) => [n.id, n.name]));
+
+        const formattedEdges = subgraph.edges
+          .slice(0, 10)
+          .map((e) => {
+            const src = nodeMap.get(e.sourceId) || e.sourceId;
+            const tgt = nodeMap.get(e.targetId) || e.targetId;
+            return `- [🔗 ${src} -> ${e.relationType} -> ${tgt}]: ${e.description}`;
+          });
+
+        if (formattedEdges.length > 0) {
+          graphContextFormatted = `\n\nVERIFIED KNOWLEDGE GRAPH RELATIONSHIPS:\n${formattedEdges.join('\n')}`;
+        }
+      }
+    } catch (graphErr) {
+      console.warn('Failed to inject graph context:', graphErr);
+    }
+
+    const systemInstruction = `You are a helpful, intelligent, and precise academic tutor. Answer the user's question accurately using ONLY the provided context chunks and verified knowledge graph relationships.
 
 MULTILINGUAL CAPABILITIES:
 1. You support ALL human languages (English, Spanish, French, German, Chinese, Japanese, Hindi, Bengali, Arabic, Russian, Portuguese, etc.).
@@ -80,14 +118,17 @@ MATHEMATICAL, VECTOR, & SCIENTIFIC NOTATION:
    - Greek letters: Use LaTeX like $\\alpha, \\beta, \\gamma, \\theta, \\lambda, \\mu, \\sigma, \\omega, \\Delta, \\Sigma, \\Omega$.
    - Relations: Use $\\approx$, $\\leq$, $\\geq$, $\\neq$, $\\pm$, $\\times$, $\\cdot$, $\\in$, $\\notin$.
 
-CITATION INSTRUCTIONS:
+CITATION & KNOWLEDGE GRAPH INSTRUCTIONS:
 1. For every factual statement derived from the documents, append citation tags like [1], [2] referencing the chunk number supporting that statement.
 2. If multiple chunks support a statement, append all relevant tags (e.g. [1][2]).
-3. If the answer is not present in the provided context chunks and the user asks a specific factual question about the documents, say: "I don't have information about that in the uploaded documents."
-4. Never invent facts or extrapolate beyond what is stated in the context.`;
+3. Whenever referencing relationships between academic concepts that are present in the VERIFIED KNOWLEDGE GRAPH RELATIONSHIPS, format the relationship as:
+   [🔗 Source -> RELATION -> Target]
+   (e.g., [🔗 Linear Regression -> USES -> Gradient Descent]).
+4. If the answer is not present in the provided context and the user asks a specific factual question about the documents, say: "I don't have information about that in the uploaded documents."
+5. Never invent facts or extrapolate beyond what is stated in the context.`;
 
     const userPrompt = `CONTEXT:
-${contextFormatted}
+${contextFormatted}${graphContextFormatted}
 
 USER QUESTION: ${question}
 
@@ -131,7 +172,7 @@ ANSWER:`;
       'namaste', 'namaskar', 'kaise ho',
       'ciao', 'hallo', 'guten tag',
       'ni hao', 'nǐ hǎo', 'konnichiwa',
-      'olá', 'ola'
+      'olá', 'ola',
     ];
 
     if (greetings.some((g) => qLower === g || qLower.startsWith(g + ' ') || qLower.startsWith(g + '!'))) {
@@ -172,7 +213,7 @@ ANSWER:`;
     const targetIdx = bestChunkIndex >= 0 ? bestChunkIndex : 0;
     const targetChunk = chunks[targetIdx];
 
-    // Clean excerpt: strip any base64 image data URIs or raw markdown image junk
+    // Clean excerpt
     let excerpt = targetChunk.text
       .replace(/!\[([^\]]*)\]\(data:image\/[a-zA-Z0-9.\-_+]+;base64,[A-Za-z0-9+/=\s]+\)/gi, (_m, alt) => {
         const cleanAlt = alt?.replace(/\\-/g, '-').trim();

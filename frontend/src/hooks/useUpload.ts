@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { uploadDocument, subscribeStatusSSE } from '../api/client';
 import { useAppStore } from '../store/appStore';
+import { useGraphStore } from '../store/graphStore';
 import { Document, ProcessingStatus } from '../types';
 
 const ACCEPTED_EXTENSIONS = [
@@ -103,6 +104,9 @@ export function useUpload() {
                 title: 'Processing Complete',
                 message: `"${file.name}" is indexed and ready to query.`,
               });
+              // Auto-refresh graph & review queue
+              useGraphStore.getState().fetchGraphData();
+              useGraphStore.getState().fetchReviewQueue();
               unsubscribe();
             } else if (status.stage === 'error') {
               setIsUploading(false);

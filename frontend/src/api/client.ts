@@ -1,4 +1,10 @@
-import { Document, ProcessingStatus, AskResponse, Citation } from '../types';
+import {
+  Document,
+  ProcessingStatus,
+  AskResponse,
+  GraphData,
+  ReviewQueueItem,
+} from '../types';
 
 const API_BASE = '/api';
 
@@ -113,4 +119,68 @@ export async function getDocumentText(docId: string): Promise<string> {
   }
   const data = await res.json();
   return data.text || '';
+}
+
+// ================= Phase 2 Graph & Review Queue APIs =================
+
+export async function fetchGraph(docIds?: string[]): Promise<GraphData> {
+  const params = new URLSearchParams();
+  if (docIds && docIds.length > 0) {
+    params.append('docIds', docIds.join(','));
+  }
+  const queryString = params.toString() ? `?${params.toString()}` : '';
+  const res = await fetch(`${API_BASE}/graph${queryString}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to fetch graph data: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchReviewQueue(): Promise<ReviewQueueItem[]> {
+  const res = await fetch(`${API_BASE}/graph/review-queue`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to fetch review queue: ${res.statusText}`);
+  }
+  const data = await res.json();
+  return Array.isArray(data) ? data : data.items || [];
+}
+
+export async function resolveReviewItem(
+  id: string,
+  action: 'merge' | 'separate' | 'redirect',
+  targetEntityId?: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/graph/review-queue/${id}/resolve`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ action, targetEntityId }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to resolve review item: ${res.statusText}`);
+  }
+}
+
+export async function reindexGraph(
+  docId?: string
+): Promise<{ success: boolean; stats: any }> {
+  const res = await fetch(`${API_BASE}/graph/reindex`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ docId }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to reindex graph: ${res.statusText}`);
+  }
+
+  return res.json();
 }

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
-import { Bot, Copy, Check, ChevronDown, ChevronUp, BookOpen } from 'lucide-react';
-import { Message, Citation } from '../../types';
+import React, { useState, useMemo } from 'react';
+import { Bot, Copy, Check, ChevronDown, ChevronUp, BookOpen, Network } from 'lucide-react';
+import { Message } from '../../types';
 import { CitationChip } from './CitationChip';
+import { RelationChip } from './RelationChip';
 import { MathContent } from './MathContent';
 
 interface AssistantBubbleProps {
@@ -18,6 +19,16 @@ export const AssistantBubble: React.FC<AssistantBubbleProps> = ({ message }) => 
   });
 
   const citations = message.citations || [];
+
+  // Detect relation references in text
+  const relationReferences = useMemo(() => {
+    const matches = message.content.match(/\[🔗\s*[^\]]+\]/g);
+    if (!matches) return [];
+    const unique = Array.from(new Set(matches.map((m) => m.slice(1, -1))));
+    return unique;
+  }, [message.content]);
+
+  const totalSources = citations.length + relationReferences.length;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(message.content);
@@ -56,13 +67,13 @@ export const AssistantBubble: React.FC<AssistantBubbleProps> = ({ message }) => 
             </div>
           </div>
 
-          {/* Formatted body with KaTeX and math symbol support */}
+          {/* Formatted body with KaTeX, math symbol, and graph relation support */}
           <div className="text-slate-700 font-normal leading-relaxed prose-chat break-words">
             <MathContent content={message.content} citations={citations} />
           </div>
 
-          {/* Bottom Citations Drawer */}
-          {citations.length > 0 && (
+          {/* Bottom Citations & Provenance Drawer */}
+          {totalSources > 0 && (
             <div className="mt-3 pt-3 border-t border-slate-100">
               <button
                 onClick={() => setSourcesOpen(!sourcesOpen)}
@@ -71,7 +82,7 @@ export const AssistantBubble: React.FC<AssistantBubbleProps> = ({ message }) => 
                 <div className="flex items-center gap-1.5">
                   <BookOpen className="w-3.5 h-3.5 text-indigo-600" />
                   <span>
-                    Sources Cited ({citations.length})
+                    Evidence & Provenance ({totalSources})
                   </span>
                 </div>
                 {sourcesOpen ? (
@@ -82,14 +93,38 @@ export const AssistantBubble: React.FC<AssistantBubbleProps> = ({ message }) => 
               </button>
 
               {sourcesOpen && (
-                <div className="mt-2 grid grid-cols-1 gap-1.5 pt-1 animate-in fade-in">
-                  {citations.map((c) => (
-                    <CitationChip
-                      key={`card-${c.chunkId}-${c.index}`}
-                      citation={c}
-                      inline={false}
-                    />
-                  ))}
+                <div className="mt-2 space-y-2 pt-1 animate-in fade-in">
+                  {/* Document passages */}
+                  {citations.length > 0 && (
+                    <div className="grid grid-cols-1 gap-1.5">
+                      {citations.map((c) => (
+                        <CitationChip
+                          key={`card-${c.chunkId}-${c.index}`}
+                          citation={c}
+                          inline={false}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Graph relation chips */}
+                  {relationReferences.length > 0 && (
+                    <div className="pt-1.5 border-t border-slate-100/80">
+                      <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1 flex items-center gap-1">
+                        <Network className="w-3 h-3 text-indigo-500" />
+                        <span>Knowledge Graph Relations</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {relationReferences.map((rel, idx) => (
+                          <RelationChip
+                            key={`rel-card-${idx}`}
+                            raw={rel}
+                            inline={false}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -10,6 +10,7 @@ import { keywordIndex } from '../store/KeywordIndex';
 import { extractionService } from '../services/ExtractionService';
 import { chunkingService } from '../services/ChunkingService';
 import { embeddingService } from '../services/EmbeddingService';
+import { extractAndStoreGraphForChunks } from './graph';
 import { Document, ProcessingStatus, VectorRecord } from '../types';
 
 export const uploadRouter = Router();
@@ -108,7 +109,7 @@ async function processDocumentAsync(docId: string, filePath: string, filename: s
     const embedded = await embeddingService.embedChunks(chunks);
 
     // 4. Indexing (VectorStore + KeywordIndex)
-    emitStatusUpdate(docId, { stage: 'saving', progress: 90 });
+    emitStatusUpdate(docId, { stage: 'saving', progress: 80 });
     const vectorRecords: VectorRecord[] = chunks.map((chunk, index) => ({
       chunkId: chunk.chunkId,
       vector: embedded[index]?.vector || [],
@@ -119,6 +120,10 @@ async function processDocumentAsync(docId: string, filePath: string, filename: s
     await vectorStore.upsertBatch(vectorRecords);
     keywordIndex.addChunks(chunks);
 
+    // 5. Graph Extraction & Provenance Anchoring
+    emitStatusUpdate(docId, { stage: 'graph', progress: 85 });
+    await extractAndStoreGraphForChunks(chunks);
+
     // Update document with isOCR flag
     const doc = metadataStore.get(docId);
     if (doc) {
@@ -126,7 +131,7 @@ async function processDocumentAsync(docId: string, filePath: string, filename: s
       await metadataStore.set(doc);
     }
 
-    // 5. Done
+    // 6. Done
     emitStatusUpdate(docId, { stage: 'done', progress: 100 });
   } catch (err: any) {
     console.error(`Document processing failed for ${docId}:`, err);

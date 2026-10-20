@@ -1,13 +1,26 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { Document, Message, Citation, Chunk, ProcessingStatus, Toast } from '../types';
+import {
+  Document,
+  Message,
+  Citation,
+  Chunk,
+  ProcessingStatus,
+  Toast,
+  PreviewableEvidence,
+  EvidenceRef,
+} from '../types';
 
 interface AppState {
+  // View mode
+  activeView: 'chat' | 'graph';
+  setActiveView: (view: 'chat' | 'graph') => void;
+
   // Data
   documents: Document[];
   messages: Message[];
   activeDocIds: string[]; // empty means all documents
-  previewChunk: (Chunk | Citation) | null;
+  previewChunk: (Chunk | Citation | PreviewableEvidence) | null;
   previewMode: 'quote' | 'document';
 
   // UI status
@@ -35,7 +48,8 @@ interface AppState {
   setActiveDocIds: (docIds: string[]) => void;
 
   // Preview actions
-  setPreviewChunk: (chunk: (Chunk | Citation) | null) => void;
+  setPreviewChunk: (chunk: (Chunk | Citation | PreviewableEvidence) | null) => void;
+  showEvidence: (evidence: EvidenceRef, fallbackTitle?: string) => void;
   setPreviewMode: (mode: 'quote' | 'document') => void;
   closePreview: () => void;
 
@@ -54,6 +68,9 @@ interface AppState {
 export const useAppStore = create<AppState>()(
   persist(
     (set) => ({
+      activeView: 'chat',
+      setActiveView: (activeView) => set({ activeView }),
+
       documents: [],
       messages: [],
       activeDocIds: [],
@@ -130,6 +147,28 @@ export const useAppStore = create<AppState>()(
           previewOpen: Boolean(chunk),
         }),
 
+      showEvidence: (evidence: EvidenceRef, fallbackTitle?: string) =>
+        set({
+          previewChunk: {
+            chunkId: evidence.chunkId || `ev-${Date.now()}`,
+            quote: evidence.exactQuote,
+            text: evidence.exactQuote,
+            metadata: {
+              docId: evidence.docId || '',
+              filename: evidence.filename || fallbackTitle || 'Document Source',
+              page: evidence.page,
+              slide: evidence.slide,
+              sheet: evidence.sheet,
+              rowStart: evidence.rowStart,
+              lineStart: evidence.lineStart,
+              charStart: evidence.charOffset?.start,
+              charEnd: evidence.charOffset?.end,
+            },
+          },
+          previewOpen: true,
+          previewMode: 'quote',
+        }),
+
       setPreviewMode: (previewMode) => set({ previewMode }),
 
       closePreview: () => set({ previewOpen: false }),
@@ -164,6 +203,7 @@ export const useAppStore = create<AppState>()(
     {
       name: 'recall-storage',
       partialize: (state) => ({
+        activeView: state.activeView,
         messages: state.messages,
         sidebarOpen: state.sidebarOpen,
         activeDocIds: state.activeDocIds,

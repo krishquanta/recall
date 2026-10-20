@@ -5,6 +5,7 @@ export type ProcessingStage =
   | 'ocr'
   | 'chunking'
   | 'embedding'
+  | 'graph'
   | 'done'
   | 'error';
 
@@ -28,6 +29,7 @@ export interface Document {
 export interface Page {
   text: string;
   page?: number; // 1-indexed page number
+  slide?: number; // Presentation slide number (1-indexed)
   sheet?: string; // Excel sheet name
   rowStart?: number; // Excel/CSV row number (1-indexed)
   lineStart?: number; // Markdown/TXT line number (1-indexed)
@@ -41,6 +43,7 @@ export interface ChunkMetadata {
   chunkIndex: number;
   isOCR?: boolean;
   page?: number;
+  slide?: number;
   sheet?: string;
   rowStart?: number;
   lineStart?: number;
@@ -105,3 +108,5 @@ export interface SearchRequest {
 export interface SearchResponse {
   results: RankedChunk[];
 }
+
+export * from './graph';

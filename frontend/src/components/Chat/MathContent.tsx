@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import katex from 'katex';
 import { Citation } from '../../types';
 import { CitationChip } from './CitationChip';
+import { RelationChip } from './RelationChip';
 
 interface MathContentProps {
   content: string;
@@ -84,7 +85,7 @@ export const MathContent: React.FC<MathContentProps> = ({
               );
             }
 
-            // 3. Parse inline formatting: math ($...$ or \(...\)), citation chips ([1]), bold, code, and text
+            // 3. Parse inline formatting: math ($...$ or \(...\)), citation chips ([1]), relation chips ([🔗 ...]), bold, code, and text
             const nodes = parseInlineMathAndCitations(line, citations, pIdx, lineIdx);
 
             // Handle list bullets
@@ -111,7 +112,7 @@ export const MathContent: React.FC<MathContentProps> = ({
 };
 
 /**
- * Tokenizes and parses a single line into Math, Citations, Code, and Text
+ * Tokenizes and parses a single line into Math, Citations, Relation Chips, Code, and Text
  */
 function parseInlineMathAndCitations(
   line: string,
@@ -123,13 +124,15 @@ function parseInlineMathAndCitations(
 
   // Regex tokens:
   // 1. Block math inside line: \$\$([\s\S]+?)\$\$
-  // 2. Inline math: \$([^\$]+?)\$ or \\\(([\s\S]+?)\\\)
-  // 3. Citation tags: \[(\d+)\]
-  // 4. Inline code: `([^`]+)`
-  // 5. Bold: \*\*([^\*]+)\*\*
-  // 6. Direct LaTeX commands like \vec{v}, \nabla, \alpha, \begin{pmatrix}...\end{pmatrix}
+  // 2. Inline math: \$([^\$]+?)\$ or \\\(([\s\S]+?\\\)
+  // 3. Direct LaTeX commands like \vec{v}, \nabla, \alpha
+  // 4. Matrix environments
+  // 5. Graph relation chips: \[🔗([^\]]+)\]
+  // 6. Citation tags: \[(\d+)\]
+  // 7. Inline code: `([^`]+)`
+  // 8. Bold: \*\*([^\*]+)\*\*
   const tokenRegex =
-    /(\$\$[\s\S]+?\$\$|\$[^\$]+?\$|\\\([\s\S]+?\\\)|\b\\(?:vec|mathbf|hat)\{[A-Za-z0-9_]+\}|\b\\(?:nabla|partial|times|cdot|pm|mp|approx|leq|geq|neq|infty|alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|omega|Delta|Sigma|Omega)\b|\\begin\{(?:pmatrix|bmatrix|matrix|vmatrix)\}[\s\S]+?\\end\{(?:pmatrix|bmatrix|matrix|vmatrix)\}|\[(\d+)\]|`([^`]+)`|\*\*([^\*]+)\*\*)/g;
+    /(\$\$[\s\S]+?\$\$|\$[^\$]+?\$|\\\([\s\S]+?\\\)|\b\\(?:vec|mathbf|hat)\{[A-Za-z0-9_]+\}|\b\\(?:nabla|partial|times|cdot|pm|mp|approx|leq|geq|neq|infty|alpha|beta|gamma|delta|theta|lambda|mu|pi|sigma|omega|Delta|Sigma|Omega)\b|\\begin\{(?:pmatrix|bmatrix|matrix|vmatrix)\}[\s\S]+?\\end\{(?:pmatrix|bmatrix|matrix|vmatrix)\}|\[🔗\s*[^\]]+\]|\[(\d+)\]|`([^`]+)`|\*\*([^\*]+)\*\*)/g;
 
   let lastIndex = 0;
   let match: RegExpExecArray | null;
@@ -194,6 +197,16 @@ function parseInlineMathAndCitations(
           key={`m-cmd-${pIdx}-${lineIdx}-${matchStart}`}
           className="inline-math mx-0.5 align-baseline"
           dangerouslySetInnerHTML={{ __html: html }}
+        />
+      );
+    } else if (matchText.startsWith('[🔗') && matchText.endsWith(']')) {
+      // Graph relation chip: [🔗 Source -> RELATION -> Target]
+      const rawRel = matchText.slice(1, -1);
+      nodes.push(
+        <RelationChip
+          key={`rel-${pIdx}-${lineIdx}-${matchStart}`}
+          raw={rawRel}
+          inline={true}
         />
       );
     } else if (matchText.startsWith('[') && matchText.endsWith(']') && /^\d+$/.test(matchText.slice(1, -1))) {
