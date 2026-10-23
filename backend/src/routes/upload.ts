@@ -124,6 +124,14 @@ async function processDocumentAsync(docId: string, filePath: string, filename: s
     emitStatusUpdate(docId, { stage: 'graph', progress: 85 });
     await extractAndStoreGraphForChunks(chunks);
 
+    // Asynchronously scan for cross-source contradictions
+    try {
+      const { contradictionDetectionService } = await import('../services/ContradictionDetectionService');
+      await contradictionDetectionService.evaluateCrossSourceContradictions(docId);
+    } catch (contradictionErr) {
+      console.warn('Contradiction evaluation failed:', contradictionErr);
+    }
+
     // Update document with isOCR flag
     const doc = metadataStore.get(docId);
     if (doc) {

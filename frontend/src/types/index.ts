@@ -135,6 +135,8 @@ export interface ClaimNode {
   createdAt?: number;
 }
 
+export type CurationStatus = 'proposed' | 'verified' | 'rejected' | 'corrected';
+
 export interface RelationshipEdge {
   id: string;
   sourceId: string;
@@ -145,6 +147,109 @@ export interface RelationshipEdge {
   evidence: EvidenceRef;
   claimId?: string;
   createdAt?: number;
+  curationStatus?: CurationStatus;
+  curatedAt?: number;
+  curationReason?: string;
+  originalRelationType?: RelationType;
+  hasContradiction?: boolean;
+  contradictionId?: string;
+}
+
+// ================= Phase 3 Contradiction, Curation & Audit Types =================
+
+export type ContradictionType =
+  | 'direct_negation'
+  | 'divergent_quantities'
+  | 'incompatible_conditions'
+  | 'contextual_exception'
+  | 'stale_superseded'
+  | 'none';
+
+export type ContradictionSeverity = 'high' | 'medium' | 'low';
+
+export type ContradictionResolution =
+  | 'prefer_a'
+  | 'prefer_b'
+  | 'both_valid'
+  | 'explicit_contradicts_edge';
+
+export interface ContradictionAlert {
+  id: string;
+  claimIdA: string;
+  claimIdB: string;
+  docIdA: string;
+  docIdB: string;
+  entityId: string;
+  entityName: string;
+  quoteA: string;
+  quoteB: string;
+  filenameA: string;
+  filenameB: string;
+  type: ContradictionType;
+  severity: ContradictionSeverity;
+  explanation: string;
+  reconciliationHint?: string;
+  detectedAt: number;
+  status: 'active' | 'resolved_claim_a' | 'resolved_claim_b' | 'dismissed_both_valid';
+  resolutionNote?: string;
+  resolvedAt?: number;
+}
+
+export interface AlignedClaim {
+  claimId: string;
+  claimText: string;
+  docId: string;
+  filename: string;
+  evidence: EvidenceRef;
+  confidence: number;
+  modality?: ClaimModality;
+  documentDate?: string;
+  documentVersion?: number;
+  isStale?: boolean;
+  supersededByClaimId?: string;
+}
+
+export interface ClaimTopicGroup {
+  topic: string;
+  claims: AlignedClaim[];
+  consensusScore: number;
+  hasContradiction: boolean;
+  hasStaleClaim: boolean;
+}
+
+export interface ClaimComparisonCluster {
+  entityId: string;
+  entityName: string;
+  claimGroups: ClaimTopicGroup[];
+}
+
+export type AuditActionType =
+  | 'edge_curate_accept'
+  | 'edge_curate_reject'
+  | 'edge_curate_correct'
+  | 'relationship_curated'
+  | 'relationship_created'
+  | 'relationship_deleted'
+  | 'entity_updated'
+  | 'entity_merge'
+  | 'entity_edit'
+  | 'claim_curate'
+  | 'contradiction_resolved'
+  | 'contradiction_resolve'
+  | 'rollback';
+
+export interface AuditLogEntry {
+  auditId: string;
+  timestamp: number;
+  action: AuditActionType;
+  targetType: 'relationship' | 'entity' | 'claim' | 'contradiction';
+  targetId: string;
+  beforeState: any;
+  afterState: any;
+  reason?: string;
+  sourceDocId?: string;
+  rolledBack?: boolean;
+  rollbackRefId?: string;
 }
 
 export interface ReviewQueueItem {

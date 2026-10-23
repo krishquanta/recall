@@ -110,3 +110,5 @@ export interface SearchResponse {
 }
 
 export * from './graph';
+export * from './audit';
+export * from './claim';

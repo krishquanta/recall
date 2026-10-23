@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { getDocuments, deleteDocument, reindexDocument, getFileUrl } from '../api/client';
 import { useAppStore } from '../store/appStore';
+import { useGraphStore } from '../store/graphStore';
 
 export function useDocuments() {
   const documents = useAppStore((state) => state.documents);
@@ -40,6 +41,9 @@ export function useDocuments() {
       try {
         await deleteDocument(docId);
         removeDocument(docId);
+        // Refresh knowledge graph and review queue to prune orphaned entities/edges
+        useGraphStore.getState().fetchGraphData();
+        useGraphStore.getState().fetchReviewQueue();
         addToast({
           type: 'success',
           title: 'Document Deleted',

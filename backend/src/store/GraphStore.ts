@@ -5,7 +5,15 @@ import {
   RelationshipEdge,
   ClaimNode,
   EvidenceRef,
+  CurationStatus,
 } from '../types';
+import {
+  safeUnlink,
+  safeUnlinkSync,
+  cleanupStaleTempFiles,
+  cleanupStaleTempFilesSync,
+  atomicWriteJson,
+} from '../utils/fileStorage';
 
 export interface GraphData {
   nodes: EntityNode[];
@@ -28,6 +36,7 @@ export class GraphStore {
     const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
     this.filePath = filePath || path.join(dataDir, 'graph.json');
     this.ensureDir();
+    cleanupStaleTempFilesSync(this.filePath, 0);
     this.loadSync();
   }
 
@@ -109,6 +118,9 @@ export class GraphStore {
           : [];
         for (const e of rawEdges as RelationshipEdge[]) {
           if (e && e.id) {
+            if (!e.curationStatus) {
+              e.curationStatus = 'proposed';
+            }
             this.edges.set(e.id, e);
           }
         }
@@ -146,33 +158,18 @@ export class GraphStore {
   }
 
   private async persist(): Promise<void> {
-    this.writeLock = this.writeLock
-      .then(async () => {
-        this.ensureDir();
-        // SDD format: Record of nodes, edges, claims
-        const serialized = {
-          nodes: Object.fromEntries(this.nodes.entries()),
-          edges: Object.fromEntries(this.edges.entries()),
-          claims: Object.fromEntries(this.claims.entries()),
-        };
+    const op = async () => {
+      this.ensureDir();
+      // SDD format: Record of nodes, edges, claims
+      const serialized = {
+        nodes: Object.fromEntries(this.nodes.entries()),
+        edges: Object.fromEntries(this.edges.entries()),
+        claims: Object.fromEntries(this.claims.entries()),
+      };
+      await atomicWriteJson(this.filePath, serialized, { space: 2 });
+    };
 
-        const tempPath = `${this.filePath}.tmp.${Date.now()}`;
-        try {
-          await fs.promises.writeFile(tempPath, JSON.stringify(serialized, null, 2), 'utf-8');
-          try {
-            await fs.promises.rename(tempPath, this.filePath);
-          } catch {
-            await fs.promises.copyFile(tempPath, this.filePath);
-            await fs.promises.unlink(tempPath).catch(() => {});
-          }
-        } catch (err) {
-          await fs.promises.writeFile(this.filePath, JSON.stringify(serialized, null, 2), 'utf-8');
-        }
-      })
-      .catch((err) => {
-        console.error(`Error saving graph to ${this.filePath}:`, err);
-      });
-
+    this.writeLock = this.writeLock.then(op, op);
     return this.writeLock;
   }
 
@@ -198,6 +195,9 @@ export class GraphStore {
 
   public addEdge(edge: RelationshipEdge): void {
     if (!this.isLoaded) this.loadSync();
+    if (!edge.curationStatus) {
+      edge.curationStatus = 'proposed';
+    }
     this.edges.set(edge.id, edge);
 
     const outList = this.outgoingEdges.get(edge.sourceId) || [];
@@ -216,6 +216,114 @@ export class GraphStore {
   public addClaim(claim: ClaimNode): void {
     if (!this.isLoaded) this.loadSync();
     this.claims.set(claim.id, claim);
+  }
+
+  public getEdge(id: string): RelationshipEdge | undefined {
+    if (!this.isLoaded) this.loadSync();
+    const edge = this.edges.get(id);
+    if (!edge) return undefined;
+    return {
+      ...edge,
+      curationStatus: edge.curationStatus || 'proposed',
+    };
+  }
+
+  public updateEdge(id: string, updatedEdge: RelationshipEdge): void {
+    if (!this.isLoaded) this.loadSync();
+    const existing = this.edges.get(id);
+    if (!existing) {
+      this.addEdge(updatedEdge);
+      return;
+    }
+
+    const oldSourceId = existing.sourceId;
+    const oldTargetId = existing.targetId;
+    const newSourceId = updatedEdge.sourceId;
+    const newTargetId = updatedEdge.targetId;
+
+    // 1. Reconcile outgoing edges if source changed
+    if (oldSourceId !== newSourceId) {
+      const oldOut = this.outgoingEdges.get(oldSourceId) || [];
+      this.outgoingEdges.set(oldSourceId, oldOut.filter((eId) => eId !== id));
+    }
+    // Sweep any stale outgoing registrations (including in-place mutation edge cases)
+    for (const [sId, outList] of this.outgoingEdges.entries()) {
+      if (sId !== newSourceId && outList.includes(id)) {
+        this.outgoingEdges.set(sId, outList.filter((eId) => eId !== id));
+      }
+    }
+    const newOut = this.outgoingEdges.get(newSourceId) || [];
+    if (!newOut.includes(id)) newOut.push(id);
+    this.outgoingEdges.set(newSourceId, newOut);
+
+    // 2. Reconcile incoming edges if target changed
+    if (oldTargetId !== newTargetId) {
+      const oldIn = this.incomingEdges.get(oldTargetId) || [];
+      this.incomingEdges.set(oldTargetId, oldIn.filter((eId) => eId !== id));
+    }
+    // Sweep any stale incoming registrations (including in-place mutation edge cases)
+    for (const [tId, inList] of this.incomingEdges.entries()) {
+      if (tId !== newTargetId && inList.includes(id)) {
+        this.incomingEdges.set(tId, inList.filter((eId) => eId !== id));
+      }
+    }
+    const newIn = this.incomingEdges.get(newTargetId) || [];
+    if (!newIn.includes(id)) newIn.push(id);
+    this.incomingEdges.set(newTargetId, newIn);
+
+    // 3. Persist updated edge with guaranteed curationStatus invariant
+    this.edges.set(id, {
+      ...updatedEdge,
+      curationStatus: updatedEdge.curationStatus || existing.curationStatus || 'proposed',
+    });
+  }
+
+  public deleteEdge(id: string): boolean {
+    if (!this.isLoaded) this.loadSync();
+    const existing = this.edges.get(id);
+    if (!existing) return false;
+
+    const outList = this.outgoingEdges.get(existing.sourceId) || [];
+    this.outgoingEdges.set(existing.sourceId, outList.filter((eId) => eId !== id));
+
+    const inList = this.incomingEdges.get(existing.targetId) || [];
+    this.incomingEdges.set(existing.targetId, inList.filter((eId) => eId !== id));
+
+    return this.edges.delete(id);
+  }
+
+  public getClaim(id: string): ClaimNode | undefined {
+    if (!this.isLoaded) this.loadSync();
+    return this.claims.get(id);
+  }
+
+  public deleteClaim(id: string): boolean {
+    if (!this.isLoaded) this.loadSync();
+    return this.claims.delete(id);
+  }
+
+  public captureSnapshot(): {
+    nodes: Map<string, EntityNode>;
+    edges: Map<string, RelationshipEdge>;
+    claims: Map<string, ClaimNode>;
+  } {
+    if (!this.isLoaded) this.loadSync();
+    return {
+      nodes: new Map(Array.from(this.nodes.entries()).map(([k, v]) => [k, { ...v }])),
+      edges: new Map(Array.from(this.edges.entries()).map(([k, v]) => [k, { ...v }])),
+      claims: new Map(Array.from(this.claims.entries()).map(([k, v]) => [k, { ...v }])),
+    };
+  }
+
+  public restoreSnapshot(snapshot: {
+    nodes: Map<string, EntityNode>;
+    edges: Map<string, RelationshipEdge>;
+    claims: Map<string, ClaimNode>;
+  }): void {
+    this.nodes = snapshot.nodes;
+    this.edges = snapshot.edges;
+    this.claims = snapshot.claims;
+    this.rebuildIndices();
   }
 
   public getEntity(id: string): EntityNode | undefined {
@@ -273,10 +381,17 @@ export class GraphStore {
     return result;
   }
 
-  public getSubgraph(entityIds: string[], depth = 1): { nodes: EntityNode[]; edges: RelationshipEdge[] } {
+  public getSubgraph(
+    entityIds: string | string[],
+    depth = 1,
+    options?: { includeRejected?: boolean }
+  ): { nodes: EntityNode[]; edges: RelationshipEdge[] } {
     if (!this.isLoaded) this.loadSync();
+    const includeRejected = options?.includeRejected ?? false;
+    const idList = Array.isArray(entityIds) ? entityIds : [entityIds];
+
     const visitedNodes = new Set<string>();
-    let currentFrontier = new Set<string>(entityIds.filter((id) => this.nodes.has(id)));
+    let currentFrontier = new Set<string>(idList.filter((id) => this.nodes.has(id)));
 
     for (const id of currentFrontier) {
       visitedNodes.add(id);
@@ -288,7 +403,10 @@ export class GraphStore {
         const outIds = this.outgoingEdges.get(currId) || [];
         for (const edgeId of outIds) {
           const edge = this.edges.get(edgeId);
-          if (edge && this.nodes.has(edge.targetId)) {
+          if (!edge) continue;
+          if (!includeRejected && edge.curationStatus === 'rejected') continue;
+
+          if (this.nodes.has(edge.targetId)) {
             if (!visitedNodes.has(edge.targetId)) {
               visitedNodes.add(edge.targetId);
               nextFrontier.add(edge.targetId);
@@ -299,7 +417,10 @@ export class GraphStore {
         const inIds = this.incomingEdges.get(currId) || [];
         for (const edgeId of inIds) {
           const edge = this.edges.get(edgeId);
-          if (edge && this.nodes.has(edge.sourceId)) {
+          if (!edge) continue;
+          if (!includeRejected && edge.curationStatus === 'rejected') continue;
+
+          if (this.nodes.has(edge.sourceId)) {
             if (!visitedNodes.has(edge.sourceId)) {
               visitedNodes.add(edge.sourceId);
               nextFrontier.add(edge.sourceId);
@@ -322,12 +443,51 @@ export class GraphStore {
     const nodeSet = new Set(resultNodes.map((n) => n.id));
     const resultEdges: RelationshipEdge[] = [];
     for (const edge of this.edges.values()) {
+      if (!includeRejected && edge.curationStatus === 'rejected') {
+        continue;
+      }
       if (nodeSet.has(edge.sourceId) && nodeSet.has(edge.targetId)) {
-        resultEdges.push(edge);
+        resultEdges.push({ ...edge });
       }
     }
 
     return { nodes: resultNodes, edges: resultEdges };
+  }
+
+  public getEdgesByEntity(
+    entityId: string,
+    options?: { includeRejected?: boolean }
+  ): RelationshipEdge[] {
+    if (!this.isLoaded) this.loadSync();
+    const includeRejected = options?.includeRejected ?? false;
+
+    const inIds = this.incomingEdges.get(entityId) || [];
+    const outIds = this.outgoingEdges.get(entityId) || [];
+    const edgeIdSet = new Set<string>([...inIds, ...outIds]);
+
+    const result: RelationshipEdge[] = [];
+    for (const edgeId of edgeIdSet) {
+      const edge = this.edges.get(edgeId);
+      if (!edge) continue;
+      if (!includeRejected && edge.curationStatus === 'rejected') continue;
+      result.push({ ...edge });
+    }
+
+    return result;
+  }
+
+  public getActiveEdges(): RelationshipEdge[] {
+    if (!this.isLoaded) this.loadSync();
+    return Array.from(this.edges.values())
+      .filter((e) => e.curationStatus !== 'rejected')
+      .map((e) => ({ ...e }));
+  }
+
+  public getEdgesByStatus(status: CurationStatus): RelationshipEdge[] {
+    if (!this.isLoaded) this.loadSync();
+    return Array.from(this.edges.values())
+      .filter((e) => e.curationStatus === status)
+      .map((e) => ({ ...e }));
   }
 
   public mergeEntities(sourceId: string, targetId: string): void {

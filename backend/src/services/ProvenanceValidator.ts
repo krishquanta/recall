@@ -136,31 +136,61 @@ export class ProvenanceValidator {
   /**
    * Enforces the Definition of Done:
    * Validates that every extracted relationship, claim, and entity is anchored
-   * to a verifiable text passage in chunk.text.
+   * to a verifiable text passage in chunk.text (or across a multi-chunk window).
+   * Matches verbatim quotes against each chunk in the window and assigns
+   * specific source chunkId, docId, page, and charOffset.
    * Ungrounded assertions are strictly discarded.
    */
   public static validateAndAnchor(
-    chunk: Chunk,
+    chunkOrChunks: Chunk | Chunk[],
     payload: ExtractedGraphPayload
   ): ValidatedGraphPayload {
-    const rawText = chunk.text;
-    const meta = chunk.metadata;
+    const chunks = Array.isArray(chunkOrChunks) ? chunkOrChunks : [chunkOrChunks];
+    if (chunks.length === 0) {
+      return { entities: [], claims: [], relationships: [] };
+    }
 
     const createEvidence = (
+      targetChunk: Chunk,
       exactQuote: string,
       charOffset: { start: number; end: number }
-    ): EvidenceRef => ({
-      docId: meta.docId,
-      chunkId: chunk.chunkId,
-      filename: meta.filename,
-      page: meta.page,
-      slide: meta.slide,
-      sheet: meta.sheet,
-      rowStart: meta.rowStart,
-      lineStart: meta.lineStart,
-      exactQuote,
-      charOffset,
-    });
+    ): EvidenceRef => {
+      const meta = targetChunk.metadata;
+      return {
+        docId: meta.docId,
+        chunkId: targetChunk.chunkId,
+        filename: meta.filename,
+        page: meta.page,
+        slide: meta.slide,
+        sheet: meta.sheet,
+        rowStart: meta.rowStart,
+        lineStart: meta.lineStart,
+        exactQuote,
+        charOffset,
+      };
+    };
+
+    // Helper to search across chunks in the window for a verbatim anchor
+    const findAnchorInChunks = (
+      quote: string,
+      fallbackText?: string
+    ): { targetChunk: Chunk; exactQuote: string; charOffset: { start: number; end: number } } | null => {
+      for (const c of chunks) {
+        const anchor = this.findVerbatimAnchor(c.text, quote);
+        if (anchor) {
+          return { targetChunk: c, exactQuote: anchor.exactQuote, charOffset: anchor.charOffset };
+        }
+      }
+      if (fallbackText) {
+        for (const c of chunks) {
+          const anchor = this.findVerbatimAnchor(c.text, fallbackText);
+          if (anchor) {
+            return { targetChunk: c, exactQuote: anchor.exactQuote, charOffset: anchor.charOffset };
+          }
+        }
+      }
+      return null;
+    };
 
     // 1. Validate entities
     const validatedEntities: ValidatedEntity[] = [];
@@ -168,14 +198,13 @@ export class ProvenanceValidator {
       if (!ent.name || !ent.name.trim()) continue;
 
       const quoteToTest = ent.mentionQuote || ent.exactQuote || ent.name;
-      const anchor = this.findVerbatimAnchor(rawText, quoteToTest) ||
-                     this.findVerbatimAnchor(rawText, ent.name);
+      const anchorMatch = findAnchorInChunks(quoteToTest, ent.name);
 
-      if (anchor) {
+      if (anchorMatch) {
         validatedEntities.push({
           ...ent,
           name: ent.name.trim(),
-          evidence: createEvidence(anchor.exactQuote, anchor.charOffset),
+          evidence: createEvidence(anchorMatch.targetChunk, anchorMatch.exactQuote, anchorMatch.charOffset),
         });
       }
     }
@@ -185,16 +214,16 @@ export class ProvenanceValidator {
     for (const rel of payload.relationships || []) {
       if (!rel.sourceEntityName || !rel.targetEntityName || !rel.relationType) continue;
 
-      const anchor = this.findVerbatimAnchor(rawText, rel.exactQuote);
-      if (anchor) {
+      const anchorMatch = findAnchorInChunks(rel.exactQuote);
+      if (anchorMatch) {
         validatedRelationships.push({
           sourceEntityName: rel.sourceEntityName.trim(),
           targetEntityName: rel.targetEntityName.trim(),
           relationType: rel.relationType,
           description: rel.description?.trim() || `${rel.sourceEntityName} ${rel.relationType} ${rel.targetEntityName}`,
           confidence: typeof rel.confidence === 'number' ? Math.max(0, Math.min(1, rel.confidence)) : 0.9,
-          exactQuote: anchor.exactQuote,
-          evidence: createEvidence(anchor.exactQuote, anchor.charOffset),
+          exactQuote: anchorMatch.exactQuote,
+          evidence: createEvidence(anchorMatch.targetChunk, anchorMatch.exactQuote, anchorMatch.charOffset),
         });
       }
     }
@@ -204,17 +233,15 @@ export class ProvenanceValidator {
     for (const claim of payload.claims || []) {
       if (!claim.subjectEntityName || !claim.claimText) continue;
 
-      const anchor = this.findVerbatimAnchor(rawText, claim.exactQuote) ||
-                     this.findVerbatimAnchor(rawText, claim.claimText);
-
-      if (anchor) {
+      const anchorMatch = findAnchorInChunks(claim.exactQuote, claim.claimText);
+      if (anchorMatch) {
         validatedClaims.push({
           subjectEntityName: claim.subjectEntityName.trim(),
           claimText: claim.claimText.trim(),
           modality: claim.modality || 'Fact',
           confidence: typeof claim.confidence === 'number' ? Math.max(0, Math.min(1, claim.confidence)) : 0.9,
-          exactQuote: anchor.exactQuote,
-          evidence: createEvidence(anchor.exactQuote, anchor.charOffset),
+          exactQuote: anchorMatch.exactQuote,
+          evidence: createEvidence(anchorMatch.targetChunk, anchorMatch.exactQuote, anchorMatch.charOffset),
         });
       }
     }
@@ -224,5 +251,15 @@ export class ProvenanceValidator {
       claims: validatedClaims,
       relationships: validatedRelationships,
     };
+  }
+
+  /**
+   * Explicit alias for validating and anchoring extracted graph payload across a multi-chunk window.
+   */
+  public static validateAndAnchorWindow(
+    chunks: Chunk[],
+    payload: ExtractedGraphPayload
+  ): ValidatedGraphPayload {
+    return this.validateAndAnchor(chunks, payload);
   }
 }

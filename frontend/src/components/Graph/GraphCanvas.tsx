@@ -18,6 +18,7 @@ import { useGraphStore } from '../../store/graphStore';
 import { useAppStore } from '../../store/appStore';
 import { GraphNodeCard, EntityCustomNode } from './GraphNodeCard';
 import { RelationEdge } from './RelationEdge';
+import { RelationCurationPopover } from './RelationCurationPopover';
 import {
   EntityType,
   EntityNode,
@@ -474,6 +475,9 @@ export const GraphCanvas: React.FC = () => {
               </div>
             </Panel>
           </ReactFlow>
+
+          {/* Relation Curation Popover */}
+          {selectedEdge && <RelationCurationPopover />}
         </div>
       )}
     </div>

@@ -8,6 +8,41 @@ import {
 import { graphStore, GraphStore } from '../store/GraphStore';
 import { reviewStore, ReviewStore } from '../store/ReviewStore';
 import { embeddingService, EmbeddingService } from './EmbeddingService';
+import { cacheService } from './CacheService';
+
+declare module './EmbeddingService' {
+  interface EmbeddingService {
+    embedBatch(texts: string[]): Promise<number[][]>;
+  }
+}
+
+// Ensure EmbeddingService prototype has embedBatch fallback if not defined
+if (typeof (EmbeddingService.prototype as any).embedBatch !== 'function') {
+  (EmbeddingService.prototype as any).embedBatch = async function (
+    this: EmbeddingService,
+    texts: string[]
+  ): Promise<number[][]> {
+    if (!texts || texts.length === 0) return [];
+    if (Object.prototype.hasOwnProperty.call(this, 'embedQuery')) {
+      return Promise.all(texts.map((t) => this.embedQuery(t)));
+    }
+    const chunks = texts.map((t, idx) => ({
+      chunkId: `entity_batch_${idx}_${Date.now()}`,
+      text: t,
+      metadata: {
+        docId: 'entity_batch',
+        filename: 'entity_batch.txt',
+        mimeType: 'text/plain',
+        chunkIndex: idx,
+        lineStart: 1,
+        charStart: 0,
+        charEnd: t.length,
+      },
+    }));
+    const embedded = await this.embedChunks(chunks);
+    return embedded.map((e) => e.vector);
+  };
+}
 
 export interface CandidateEntity {
   name: string;
@@ -24,11 +59,21 @@ export interface ResolutionResult {
 }
 
 export class DeduplicationService {
+  private batchEmbeddingCallCount: number = 0;
+
   constructor(
     private graph: GraphStore = graphStore,
     private reviews: ReviewStore = reviewStore,
     private embedder: EmbeddingService = embeddingService
   ) {}
+
+  public getBatchEmbeddingCallCount(): number {
+    return this.batchEmbeddingCallCount;
+  }
+
+  public resetCallCount(): void {
+    this.batchEmbeddingCallCount = 0;
+  }
 
   /**
    * Normalizes an entity name for lexical comparison:
@@ -93,8 +138,12 @@ export class DeduplicationService {
    * 1. Lexical and registered alias match
    * 2. Acronym match
    * 3. Semantic vector cosine similarity (>= 0.92 auto-merge, 0.78-0.92 review queue, < 0.78 distinct)
+   * Uses preloadedEmbeddings or cacheService to prevent redundant embedding calls.
    */
-  public async resolveEntity(candidate: CandidateEntity): Promise<ResolutionResult> {
+  public async resolveEntity(
+    candidate: CandidateEntity,
+    preloadedEmbeddings?: Map<string, number[]>
+  ): Promise<ResolutionResult> {
     const candidateNorm = this.normalize(candidate.name);
     const candidateAcronym = this.extractAcronym(candidate.name);
     const existingNodes = this.graph.getAll().nodes.filter((n) => n.status !== 'merged');
@@ -144,14 +193,27 @@ export class DeduplicationService {
     }
 
     // 3. Semantic Embedding Cosine Similarity
-    const candidateEmbedding = await this.embedder.embedQuery(candidate.name);
+    let candidateEmbedding =
+      preloadedEmbeddings?.get(candidate.name) ||
+      preloadedEmbeddings?.get(candidate.name.trim());
+
+    if (!candidateEmbedding || candidateEmbedding.length === 0) {
+      candidateEmbedding = await this.embedder.embedQuery(candidate.name);
+    }
 
     let bestScore = -1;
     let bestMatchedNode: EntityNode | null = null;
 
     for (const node of existingNodes) {
       if (!node.embedding || node.embedding.length === 0) {
-        node.embedding = await this.embedder.embedQuery(node.name);
+        let nodeEmbedding =
+          preloadedEmbeddings?.get(node.name) ||
+          preloadedEmbeddings?.get(node.name.trim());
+
+        if (!nodeEmbedding || nodeEmbedding.length === 0) {
+          nodeEmbedding = await this.embedder.embedQuery(node.name);
+        }
+        node.embedding = nodeEmbedding;
         this.graph.updateEntity(node.id, { embedding: node.embedding });
       }
 
@@ -249,22 +311,118 @@ export class DeduplicationService {
   }
 
   /**
-   * Resolves a batch of validated entities and returns a map of candidate.name -> resolved entityId.
+   * Resolves a batch of validated entities:
+   * 1. Collects all candidate names and un-embedded graph node names.
+   * 2. Filters out cached names via cacheService.getEmbedding(name).
+   * 3. Embeds unseen names in batch calls (up to 100 names per call using embedder.embedBatch),
+   *    reducing deduplication embedding calls by >90%.
+   * 4. Caches newly computed embeddings in cacheService.
+   * 5. Resolves candidates in-memory using preloaded embeddings.
    */
   public async resolveEntities(entities: ValidatedEntity[]): Promise<Map<string, string>> {
     const nameToId = new Map<string, string>();
+    if (!entities || entities.length === 0) {
+      return nameToId;
+    }
+
+    // 1. Collect all candidate entity names
+    const candidateNames = Array.from(
+      new Set(
+        entities
+          .map((e) => e.name?.trim())
+          .filter((name): name is string => Boolean(name && name.length > 0))
+      )
+    );
+
+    // Collect any un-embedded active node names from graph
+    const existingNodes = this.graph.getAll().nodes.filter((n) => n.status !== 'merged');
+    const unembeddedNodeNames = Array.from(
+      new Set(
+        existingNodes
+          .filter((n) => !n.embedding || n.embedding.length === 0)
+          .map((n) => n.name?.trim())
+          .filter((name): name is string => Boolean(name && name.length > 0))
+      )
+    );
+
+    const allNamesToConsider = Array.from(new Set([...candidateNames, ...unembeddedNodeNames]));
+
+    // 2. Filter out cached entities via cacheService.getEmbedding(name)
+    const preloadedEmbeddings = new Map<string, number[]>();
+    const unseenNames: string[] = [];
+
+    for (const name of allNamesToConsider) {
+      const cached = cacheService.getEmbedding(name);
+      if (cached && Array.isArray(cached) && cached.length > 0) {
+        preloadedEmbeddings.set(name, cached);
+      } else {
+        unseenNames.push(name);
+      }
+    }
+
+    // 3. Embed all unseen names in a single batch embedding call (up to 100 per call)
+    if (unseenNames.length > 0) {
+      const batchSize = 100;
+      for (let i = 0; i < unseenNames.length; i += batchSize) {
+        const batch = unseenNames.slice(i, i + batchSize);
+        this.batchEmbeddingCallCount++;
+
+        let batchVectors: number[][];
+        if (typeof this.embedder.embedBatch === 'function') {
+          batchVectors = await this.embedder.embedBatch(batch);
+        } else {
+          batchVectors = await Promise.all(batch.map((n) => this.embedder.embedQuery(n)));
+        }
+
+        const newCacheEntries: Array<{ text: string; vector: number[] }> = [];
+        for (let j = 0; j < batch.length; j++) {
+          const name = batch[j];
+          const vector =
+            batchVectors && batchVectors[j] && batchVectors[j].length > 0
+              ? batchVectors[j]
+              : this.embedder.generateMockEmbedding
+              ? this.embedder.generateMockEmbedding(name)
+              : new Array(768).fill(0);
+
+          preloadedEmbeddings.set(name, vector);
+          newCacheEntries.push({ text: name, vector });
+        }
+
+        // Cache newly computed embeddings in cacheService
+        if (newCacheEntries.length > 0) {
+          await cacheService.setEmbeddingBatch(newCacheEntries);
+        }
+      }
+    }
+
+    // Pre-populate any existing unembedded nodes in graphStore using preloaded embeddings
+    for (const node of existingNodes) {
+      if (!node.embedding || node.embedding.length === 0) {
+        const nodeVec = preloadedEmbeddings.get(node.name?.trim()) || preloadedEmbeddings.get(node.name);
+        if (nodeVec) {
+          node.embedding = nodeVec;
+          this.graph.updateEntity(node.id, { embedding: nodeVec });
+        }
+      }
+    }
+
+    // 4. Resolve each entity in the batch using preloaded embeddings
     for (const ent of entities) {
-      const res = await this.resolveEntity({
-        name: ent.name,
-        type: ent.type,
-        aliases: ent.aliases,
-        description: ent.description,
-        evidence: ent.evidence,
-      });
+      const res = await this.resolveEntity(
+        {
+          name: ent.name,
+          type: ent.type,
+          aliases: ent.aliases,
+          description: ent.description,
+          evidence: ent.evidence,
+        },
+        preloadedEmbeddings
+      );
       nameToId.set(ent.name, res.entityId);
       // Also map lowercased name for reliable lookup
       nameToId.set(ent.name.toLowerCase().trim(), res.entityId);
     }
+
     return nameToId;
   }
 }

@@ -10,13 +10,21 @@ import { documentsRouter } from './routes/documents';
 import { searchRouter } from './routes/search';
 import { askRouter } from './routes/ask';
 import { graphRouter, extractAndStoreGraphForChunks } from './routes/graph';
+import { auditRouter } from './routes/audit';
+import { curationRouter } from './routes/curation';
+import { contradictionsRouter } from './routes/contradictions';
+import { claimsRouter } from './routes/claims';
+import { settingsRouter } from './routes/settings';
 import { metadataStore } from './store/MetadataStore';
 import { vectorStore } from './store/VectorStore';
 import { keywordIndex } from './store/KeywordIndex';
 import { graphStore } from './store/GraphStore';
 import { reviewStore } from './store/ReviewStore';
+import { auditStore } from './store/AuditStore';
+import { contradictionStore } from './store/ContradictionStore';
 import { statusEmitter } from './routes/upload';
 import { ProcessingStatus } from './types';
+import { sweepAllTempFilesSync } from './utils/fileStorage';
 
 export const app = express();
 
@@ -30,6 +38,12 @@ const uploadDir = process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
 const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+// Sweep any orphaned temporary files on server boot
+const swept = sweepAllTempFilesSync(dataDir, 0);
+if (swept > 0) {
+  console.log(`Cleaned up ${swept} stale temporary files in ${dataDir}.`);
+}
 
 // Rehydrate keywordIndex from vectorStore on server startup
 try {
@@ -48,10 +62,12 @@ try {
   console.warn('Could not rehydrate keyword index:', rehydrateErr);
 }
 
-// Rehydrate GraphStore & ReviewStore on server startup
+// Rehydrate GraphStore, ReviewStore, AuditStore & ContradictionStore on server startup
 try {
   graphStore.loadSync();
   reviewStore.loadSync();
+  auditStore.loadSync();
+  contradictionStore.loadSync();
   const summary = graphStore.getAll();
   console.log(`Loaded knowledge graph: ${summary.nodes.length} nodes, ${summary.edges.length} edges, ${summary.claims.length} claims.`);
 } catch (graphLoadErr) {
@@ -166,6 +182,11 @@ app.use('/api/documents', documentsRouter);
 app.use('/api/search', searchRouter);
 app.use('/api/ask', askRouter);
 app.use('/api/graph', graphRouter);
+app.use('/api/graph', auditRouter);
+app.use('/api/graph', curationRouter);
+app.use('/api/graph/contradictions', contradictionsRouter);
+app.use('/api/graph/claims', claimsRouter);
+app.use('/api/settings', settingsRouter);
 
 // Global Error Handler
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

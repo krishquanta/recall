@@ -8,12 +8,87 @@ import { ProvenanceValidator } from '../services/ProvenanceValidator';
 import { deduplicationService } from '../services/DeduplicationService';
 import { keywordIndex } from '../store/KeywordIndex';
 import { metadataStore } from '../store/MetadataStore';
-import { Chunk, ClaimNode, RelationshipEdge } from '../types';
+import { Chunk, ClaimNode, RelationshipEdge, ValidatedEntity, ValidatedClaim, ValidatedRelationship } from '../types';
 
 export const graphRouter = Router();
 
 /**
+ * Estimates token count for text using whitespace word splitting (~1.3 tokens per word).
+ */
+export function estimateTokens(text: string): number {
+  if (!text) return 0;
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return Math.ceil(words * 1.3);
+}
+
+/**
+ * Groups 2–4 adjacent text chunks into multi-chunk windows (~2,000 tokens)
+ * to reduce LLM extraction calls by 60–75% while preserving chunk source metadata.
+ */
+export function partitionChunksIntoWindows(
+  chunks: Chunk[],
+  targetTokens: number = 2000,
+  minChunks: number = 2,
+  maxChunks: number = 4
+): Chunk[][] {
+  if (!chunks || chunks.length === 0) return [];
+  if (chunks.length === 1) return [[chunks[0]]];
+
+  const windows: Chunk[][] = [];
+  let currentWindow: Chunk[] = [];
+  let currentTokens = 0;
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const chunkTokens = estimateTokens(chunk.text);
+    const sameDoc =
+      currentWindow.length === 0 ||
+      currentWindow[0].metadata?.docId === chunk.metadata?.docId;
+
+    // Check if adding this chunk would exceed limits
+    const exceedsMaxChunks = currentWindow.length >= maxChunks;
+    const exceedsTokens =
+      currentTokens + chunkTokens > targetTokens && currentWindow.length >= minChunks;
+
+    if (currentWindow.length > 0 && (!sameDoc || exceedsMaxChunks || exceedsTokens)) {
+      windows.push(currentWindow);
+      currentWindow = [];
+      currentTokens = 0;
+    }
+
+    currentWindow.push(chunk);
+    currentTokens += chunkTokens;
+  }
+
+  if (currentWindow.length > 0) {
+    // If the last window has only 1 chunk and the preceding window is from the same doc:
+    if (currentWindow.length === 1 && windows.length > 0) {
+      const prevWindow = windows[windows.length - 1];
+      if (prevWindow[0].metadata?.docId === currentWindow[0].metadata?.docId) {
+        if (prevWindow.length < maxChunks) {
+          prevWindow.push(currentWindow[0]);
+        } else if (prevWindow.length > minChunks) {
+          const moved = prevWindow.pop()!;
+          currentWindow.unshift(moved);
+          windows.push(currentWindow);
+        } else {
+          windows.push(currentWindow);
+        }
+      } else {
+        windows.push(currentWindow);
+      }
+    } else {
+      windows.push(currentWindow);
+    }
+  }
+
+  return windows;
+}
+
+/**
  * Shared helper to extract and index graph from a set of chunks.
+ * Groups 2–4 adjacent text chunks into multi-chunk windows (~2,000 tokens),
+ * reducing LLM extraction calls by 60–75%, and performs batch entity deduplication.
  */
 export async function extractAndStoreGraphForChunks(chunks: Chunk[]): Promise<{
   entitiesCount: number;
@@ -24,19 +99,42 @@ export async function extractAndStoreGraphForChunks(chunks: Chunk[]): Promise<{
   let edgesCount = 0;
   let claimsCount = 0;
 
-  for (const chunk of chunks) {
-    // 1. Extract candidates
-    const rawPayload = await graphExtractionService.extract(chunk);
+  if (!chunks || chunks.length === 0) {
+    return { entitiesCount, edgesCount, claimsCount };
+  }
 
-    // 2. Validate & Anchor (Definition of Done)
-    const validated = ProvenanceValidator.validateAndAnchor(chunk, rawPayload);
+  // 1. Group chunks into multi-chunk windows (~2,000 tokens, 2–4 chunks)
+  const windows = partitionChunksIntoWindows(chunks);
+  const validatedWindows: Array<{
+    windowChunks: Chunk[];
+    entities: ValidatedEntity[];
+    claims: ValidatedClaim[];
+    relationships: ValidatedRelationship[];
+  }> = [];
 
-    // 3. Resolve & Deduplicate entities
-    const nameToId = await deduplicationService.resolveEntities(validated.entities);
-    entitiesCount += validated.entities.length;
+  const allValidatedEntities: ValidatedEntity[] = [];
 
-    // 4. Ingest Claims
-    for (const claim of validated.claims) {
+  // 2. Extract and validate each multi-chunk window
+  for (const windowChunks of windows) {
+    const rawPayload = await graphExtractionService.extractWindow(windowChunks);
+    const validated = ProvenanceValidator.validateAndAnchorWindow(windowChunks, rawPayload);
+
+    validatedWindows.push({
+      windowChunks,
+      entities: validated.entities,
+      claims: validated.claims,
+      relationships: validated.relationships,
+    });
+    allValidatedEntities.push(...validated.entities);
+  }
+
+  // 3. Batch resolve and deduplicate all entities across the batch in a single batch embedding call
+  const nameToId = await deduplicationService.resolveEntities(allValidatedEntities);
+  entitiesCount += allValidatedEntities.length;
+
+  // 4. Ingest Claims and Relationships across all validated windows
+  for (const vw of validatedWindows) {
+    for (const claim of vw.claims) {
       const subjectId =
         nameToId.get(claim.subjectEntityName) ||
         nameToId.get(claim.subjectEntityName.toLowerCase().trim()) ||
@@ -57,8 +155,7 @@ export async function extractAndStoreGraphForChunks(chunks: Chunk[]): Promise<{
       }
     }
 
-    // 5. Ingest Relationships
-    for (const rel of validated.relationships) {
+    for (const rel of vw.relationships) {
       const sourceId =
         nameToId.get(rel.sourceEntityName) ||
         nameToId.get(rel.sourceEntityName.toLowerCase().trim()) ||
@@ -79,6 +176,7 @@ export async function extractAndStoreGraphForChunks(chunks: Chunk[]): Promise<{
           confidence: rel.confidence,
           evidence: rel.evidence,
           createdAt: Date.now(),
+          curationStatus: 'proposed',
         };
         graphStore.addEdge(edgeNode);
         edgesCount++;

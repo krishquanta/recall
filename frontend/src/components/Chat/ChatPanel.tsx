@@ -4,11 +4,12 @@ import { MessageList } from './MessageList';
 import { InputBar } from './InputBar';
 import { ViewModeSelector } from '../Header/ViewModeSelector';
 import { useAppStore } from '../../store/appStore';
-import { PanelLeft, PanelRight, Trash2, GraduationCap } from 'lucide-react';
+import { PanelLeft, PanelRight, Trash2, GraduationCap, Settings } from 'lucide-react';
 
 export const ChatPanel: React.FC = () => {
   const toggleSidebar = useAppStore((state) => state.toggleSidebar);
   const togglePreview = useAppStore((state) => state.togglePreview);
+  const openSettings = useAppStore((state) => state.openSettings);
   const previewChunk = useAppStore((state) => state.previewChunk);
   const clearMessages = useAppStore((state) => state.clearMessages);
   const messages = useAppStore((state) => state.messages);
@@ -54,6 +55,15 @@ export const ChatPanel: React.FC = () => {
 
         {/* Action Controls */}
         <div className="flex items-center gap-1.5">
+          <button
+            onClick={openSettings}
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors"
+            title="Gemini API & Cache Settings"
+            aria-label="Settings"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+
           {messages.length > 0 && (
             <button
               onClick={clearMessages}

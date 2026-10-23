@@ -2,6 +2,13 @@ import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { ReviewQueueItem } from '../types';
+import {
+  safeUnlink,
+  safeUnlinkSync,
+  cleanupStaleTempFiles,
+  cleanupStaleTempFilesSync,
+  atomicWriteJson,
+} from '../utils/fileStorage';
 
 export class ReviewStore {
   private filePath: string;
@@ -13,6 +20,7 @@ export class ReviewStore {
     const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
     this.filePath = filePath || path.join(dataDir, 'review_queue.json');
     this.ensureDir();
+    cleanupStaleTempFilesSync(this.filePath, 0);
     this.loadSync();
   }
 
@@ -56,18 +64,7 @@ export class ReviewStore {
       .then(async () => {
         this.ensureDir();
         const list = Array.from(this.items.values());
-        const tempPath = `${this.filePath}.tmp.${Date.now()}`;
-        try {
-          await fs.promises.writeFile(tempPath, JSON.stringify(list, null, 2), 'utf-8');
-          try {
-            await fs.promises.rename(tempPath, this.filePath);
-          } catch {
-            await fs.promises.copyFile(tempPath, this.filePath);
-            await fs.promises.unlink(tempPath).catch(() => {});
-          }
-        } catch (err) {
-          await fs.promises.writeFile(this.filePath, JSON.stringify(list, null, 2), 'utf-8');
-        }
+        await atomicWriteJson(this.filePath, list, { space: 2 });
       })
       .catch((err) => {
         console.error(`Error saving review queue to ${this.filePath}:`, err);
@@ -110,6 +107,15 @@ export class ReviewStore {
 
     item.status = status;
     item.resolvedAt = Date.now();
+  }
+
+  public deleteByDocId(docId: string): void {
+    if (!this.isLoaded) this.loadSync();
+    for (const [id, item] of this.items.entries()) {
+      if (item.candidateEntity?.evidence?.docId === docId) {
+        this.items.delete(id);
+      }
+    }
   }
 
   public clear(): void {

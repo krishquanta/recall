@@ -1,30 +1,65 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Chunk, EmbeddedChunk } from '../types';
+import { cacheService } from './CacheService';
+import { keyManager, KeyManager } from './KeyManager';
 
 export class EmbeddingService {
-  private genAI: GoogleGenerativeAI | null = null;
   private readonly vectorDim = 768;
+  private genAICache = new Map<string, GoogleGenerativeAI>();
+  private keyMgr: KeyManager;
+  private clientFactory?: (apiKey: string) => any;
 
-  constructor() {
-    if (process.env.NODE_ENV !== 'test') {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (apiKey && apiKey.trim() && apiKey !== 'your_key_here') {
-        this.genAI = new GoogleGenerativeAI(apiKey.trim());
-      }
-    }
+  constructor(
+    km: KeyManager = keyManager,
+    genAIFactory?: (apiKey: string) => any
+  ) {
+    this.keyMgr = km;
+    this.clientFactory = genAIFactory;
   }
 
-  private getGenAI(): GoogleGenerativeAI | null {
-    if (process.env.NODE_ENV === 'test') {
-      return null;
+  public setKeyManager(km: KeyManager): void {
+    this.keyMgr = km;
+  }
+
+  public setClientFactory(factory: (apiKey: string) => any): void {
+    this.clientFactory = factory;
+    this.genAICache.clear();
+  }
+
+  /**
+   * Retrieves or creates a GoogleGenerativeAI instance for a given API key.
+   */
+  private getGenAI(apiKey: string): any {
+    if (this.clientFactory) {
+      return this.clientFactory(apiKey);
     }
-    if (!this.genAI) {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (apiKey && apiKey.trim() && apiKey !== 'your_key_here') {
-        this.genAI = new GoogleGenerativeAI(apiKey.trim());
+    let instance = this.genAICache.get(apiKey);
+    if (!instance) {
+      instance = new GoogleGenerativeAI(apiKey);
+      this.genAICache.set(apiKey, instance);
+    }
+    return instance;
+  }
+
+  /**
+   * Returns true if no Gemini API keys are configured in the pool or environment.
+   * When true, operates in offline/mock mode using deterministic pseudo-semantic vectors.
+   */
+  public isMockMode(): boolean {
+    if (process.env.NODE_ENV === 'test' && !this.clientFactory) {
+      return true;
+    }
+    if (this.keyMgr.getTotalKeyCount() === 0) {
+      const single = process.env.GEMINI_API_KEY;
+      const multi = process.env.GEMINI_API_KEYS;
+      if (
+        (single && single.trim() && single.trim() !== 'your_key_here') ||
+        (multi && multi.trim())
+      ) {
+        this.keyMgr.reset();
       }
     }
-    return this.genAI;
+    return this.keyMgr.getTotalKeyCount() === 0;
   }
 
   /**
@@ -33,7 +68,7 @@ export class EmbeddingService {
    */
   public generateMockEmbedding(text: string): number[] {
     const vector = new Array(this.vectorDim).fill(0);
-    const cleaned = text.toLowerCase().trim();
+    const cleaned = (text || '').toLowerCase().trim();
     if (!cleaned) {
       vector[0] = 1;
       return vector;
@@ -57,7 +92,7 @@ export class EmbeddingService {
       const trigram = cleaned.slice(i, i + 3);
       let hash = 5381;
       for (let j = 0; j < 3; j++) {
-        hash = ((hash << 5) + hash) + trigram.charCodeAt(j);
+        hash = (hash << 5) + hash + trigram.charCodeAt(j);
         hash |= 0;
       }
       const idx = Math.abs(hash) % this.vectorDim;
@@ -82,85 +117,142 @@ export class EmbeddingService {
     return vector;
   }
 
-  public async embedChunks(chunks: Chunk[]): Promise<EmbeddedChunk[]> {
-    if (chunks.length === 0) return [];
+  /**
+   * Embeds a batch of raw texts with two-tier cache lookup and KeyManager auto-failover.
+   * Automatically groups up to 100 texts per Gemini API call.
+   */
+  public async embedBatch(texts: string[]): Promise<number[][]> {
+    if (!texts || texts.length === 0) return [];
 
-    const genAI = this.getGenAI();
-    const modelName = process.env.EMBEDDING_MODEL || 'text-embedding-004';
+    const results: Array<number[] | null> = new Array(texts.length).fill(null);
+    const textToIndices = new Map<string, number[]>();
 
-    if (!genAI) {
-      return chunks.map((c) => ({
-        chunkId: c.chunkId,
-        vector: this.generateMockEmbedding(c.text),
-      }));
-    }
-
-    const results: EmbeddedChunk[] = [];
-    const batchSize = 100; // Gemini API max batch size
-
-    for (let i = 0; i < chunks.length; i += batchSize) {
-      const batch = chunks.slice(i, i + batchSize);
-      try {
-        const model = genAI.getGenerativeModel({ model: modelName });
-        const response = await model.batchEmbedContents({
-          requests: batch.map((c) => ({
-            content: { role: 'user', parts: [{ text: c.text.slice(0, 8000) }] },
-          })),
-        });
-
-        if (response.embeddings && response.embeddings.length === batch.length) {
-          for (let j = 0; j < batch.length; j++) {
-            results.push({
-              chunkId: batch[j].chunkId,
-              vector: response.embeddings[j].values,
-            });
-          }
-        } else {
-          // Fallback for this batch if response format is unexpected
-          for (const c of batch) {
-            results.push({
-              chunkId: c.chunkId,
-              vector: this.generateMockEmbedding(c.text),
-            });
-          }
-        }
-      } catch (err: any) {
-        console.warn(`Gemini batch embedding error, falling back to mock vectors:`, err?.message || err);
-        for (const c of batch) {
-          results.push({
-            chunkId: c.chunkId,
-            vector: this.generateMockEmbedding(c.text),
-          });
-        }
+    // 1. Check cache for each text
+    for (let i = 0; i < texts.length; i++) {
+      const text = texts[i];
+      const cached = cacheService.getEmbedding(text);
+      if (cached) {
+        results[i] = cached;
+      } else {
+        const list = textToIndices.get(text) || [];
+        list.push(i);
+        textToIndices.set(text, list);
       }
     }
 
-    return results;
+    if (textToIndices.size === 0) {
+      return results as number[][];
+    }
+
+    const uniqueMissingTexts = Array.from(textToIndices.keys());
+    const newEntriesToCache: Array<{ text: string; vector: number[] }> = [];
+
+    // 2. Offline / Mock mode (only when zero keys configured)
+    if (this.isMockMode()) {
+      for (const text of uniqueMissingTexts) {
+        const vector = this.generateMockEmbedding(text);
+        newEntriesToCache.push({ text, vector });
+        const indices = textToIndices.get(text)!;
+        for (const idx of indices) {
+          results[idx] = vector;
+        }
+      }
+      await cacheService.setEmbeddingBatch(newEntriesToCache);
+      return results as number[][];
+    }
+
+    // 3. Process missing texts in batches of up to 100 via KeyManager failover
+    const batchSize = 100;
+    const modelName = process.env.EMBEDDING_MODEL || 'text-embedding-004';
+
+    for (let i = 0; i < uniqueMissingTexts.length; i += batchSize) {
+      const batchTexts = uniqueMissingTexts.slice(i, i + batchSize);
+
+      const response = await this.keyMgr.executeWithFailover(async (apiKey) => {
+        const genAI = this.getGenAI(apiKey);
+        const model = genAI.getGenerativeModel({ model: modelName });
+        return await model.batchEmbedContents({
+          requests: batchTexts.map((text) => ({
+            content: { role: 'user', parts: [{ text: text.slice(0, 8000) }] },
+          })),
+        });
+      });
+
+      if (response && response.embeddings && response.embeddings.length === batchTexts.length) {
+        for (let j = 0; j < batchTexts.length; j++) {
+          const text = batchTexts[j];
+          const vector = response.embeddings[j].values;
+          newEntriesToCache.push({ text, vector });
+          const indices = textToIndices.get(text)!;
+          for (const idx of indices) {
+            results[idx] = vector;
+          }
+        }
+      } else {
+        throw new Error(
+          `Unexpected Gemini batch embedding response: expected ${batchTexts.length} embeddings, received ${
+            response?.embeddings?.length ?? 0
+          }`
+        );
+      }
+    }
+
+    if (newEntriesToCache.length > 0) {
+      await cacheService.setEmbeddingBatch(newEntriesToCache);
+    }
+
+    return results as number[][];
   }
 
+  /**
+   * Embeds chunks with two-tier cache lookup and KeyManager auto-failover.
+   * Maps chunks to texts, calls embedBatch, and preserves chunkId association.
+   */
+  public async embedChunks(chunks: Chunk[]): Promise<EmbeddedChunk[]> {
+    if (!chunks || chunks.length === 0) return [];
+
+    const texts = chunks.map((c) => c.text);
+    const vectors = await this.embedBatch(texts);
+
+    return chunks.map((c, idx) => ({
+      chunkId: c.chunkId,
+      vector: vectors[idx],
+    }));
+  }
+
+  /**
+   * Embeds a single query string with two-tier cache lookup and KeyManager auto-failover.
+   */
   public async embedQuery(query: string): Promise<number[]> {
-    if (!query.trim()) {
+    const trimmed = (query || '').trim();
+    if (!trimmed) {
       return new Array(this.vectorDim).fill(0);
     }
 
-    const genAI = this.getGenAI();
+    const cached = cacheService.getEmbedding(trimmed);
+    if (cached) {
+      return cached;
+    }
+
+    if (this.isMockMode()) {
+      const vector = this.generateMockEmbedding(trimmed);
+      await cacheService.setEmbedding(trimmed, vector);
+      return vector;
+    }
+
     const modelName = process.env.EMBEDDING_MODEL || 'text-embedding-004';
-
-    if (!genAI) {
-      return this.generateMockEmbedding(query);
-    }
-
-    try {
+    const vector = await this.keyMgr.executeWithFailover(async (apiKey) => {
+      const genAI = this.getGenAI(apiKey);
       const model = genAI.getGenerativeModel({ model: modelName });
-      const response = await model.embedContent(query.slice(0, 8000));
-      if (response.embedding?.values) {
-        return response.embedding.values;
+      const response = await model.embedContent(trimmed.slice(0, 8000));
+      if (!response.embedding?.values) {
+        throw new Error('Gemini embedContent returned response without embedding values');
       }
-    } catch (err: any) {
-      console.warn(`Gemini query embedding error, falling back to mock vector:`, err?.message || err);
-    }
+      return response.embedding.values;
+    });
 
-    return this.generateMockEmbedding(query);
+    await cacheService.setEmbedding(trimmed, vector);
+    return vector;
   }
 }
 

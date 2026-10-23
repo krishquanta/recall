@@ -4,6 +4,11 @@ import {
   AskResponse,
   GraphData,
   ReviewQueueItem,
+  ContradictionAlert,
+  ContradictionResolution,
+  ClaimComparisonCluster,
+  AuditLogEntry,
+  RelationshipEdge,
 } from '../types';
 
 const API_BASE = '/api';
@@ -180,6 +185,108 @@ export async function reindexGraph(
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `Failed to reindex graph: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+// ================= Phase 3 Curation, Contradictions & Audit APIs =================
+
+export async function curateEdge(
+  edgeId: string,
+  params: {
+    action: 'accept' | 'reject' | 'correct';
+    relationType?: string;
+    invertDirection?: boolean;
+    description?: string;
+    reason?: string;
+  }
+): Promise<{ ok: boolean; edge: RelationshipEdge; auditEntry: AuditLogEntry }> {
+  const res = await fetch(`${API_BASE}/graph/relationships/${edgeId}/curate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to curate edge: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function fetchContradictions(status?: 'active' | 'resolved'): Promise<{
+  alerts: ContradictionAlert[];
+  count: number;
+  activeCount: number;
+}> {
+  const query = status ? `?status=${status}` : '';
+  const res = await fetch(`${API_BASE}/graph/contradictions${query}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to fetch contradictions: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function resolveContradiction(
+  id: string,
+  resolution: ContradictionResolution,
+  note?: string
+): Promise<{ ok: boolean; alert: ContradictionAlert }> {
+  const res = await fetch(`${API_BASE}/graph/contradictions/${id}/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ resolution, note }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to resolve contradiction: ${res.statusText}`);
+  }
+
+  return res.json();
+}
+
+export async function fetchClaimComparison(
+  entityId?: string
+): Promise<{ cluster: ClaimComparisonCluster | null; clusters?: ClaimComparisonCluster[] }> {
+  const query = entityId ? `?entityId=${encodeURIComponent(entityId)}` : '';
+  const res = await fetch(`${API_BASE}/graph/claims/compare${query}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to fetch claim comparison: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function fetchAuditLog(limit = 100, targetId?: string): Promise<{ entries: AuditLogEntry[] }> {
+  const params = new URLSearchParams();
+  if (limit) params.append('limit', limit.toString());
+  if (targetId) params.append('targetId', targetId);
+
+  const res = await fetch(`${API_BASE}/graph/audit-log?${params.toString()}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to fetch audit log: ${res.statusText}`);
+  }
+  return res.json();
+}
+
+export async function rollbackAudit(
+  auditId: string,
+  reason?: string
+): Promise<{ success: boolean; restoredAuditId: string; targetId: string }> {
+  const res = await fetch(`${API_BASE}/graph/audit-log/${auditId}/rollback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to rollback audit: ${res.statusText}`);
   }
 
   return res.json();

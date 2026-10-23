@@ -1,6 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import { ChunkMetadata, RankedChunk, VectorRecord } from '../types';
+import {
+  safeUnlink,
+  safeUnlinkSync,
+  cleanupStaleTempFiles,
+  cleanupStaleTempFilesSync,
+  atomicWriteJson,
+} from '../utils/fileStorage';
 
 export class VectorStore {
   private filePath: string;
@@ -12,6 +19,7 @@ export class VectorStore {
     const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
     this.filePath = filePath || path.join(dataDir, 'vectors.json');
     this.ensureDir();
+    cleanupStaleTempFilesSync(this.filePath, 0);
     this.load();
   }
 
@@ -41,24 +49,15 @@ export class VectorStore {
   }
 
   private async persist(): Promise<void> {
-    this.writeLock = this.writeLock.then(async () => {
-      this.ensureDir();
-      const list = Array.from(this.records.values());
-      const tempPath = `${this.filePath}.tmp.${Date.now()}`;
-      try {
-        await fs.promises.writeFile(tempPath, JSON.stringify(list), 'utf-8');
-        try {
-          await fs.promises.rename(tempPath, this.filePath);
-        } catch {
-          await fs.promises.copyFile(tempPath, this.filePath);
-          await fs.promises.unlink(tempPath).catch(() => {});
-        }
-      } catch (err) {
-        await fs.promises.writeFile(this.filePath, JSON.stringify(list), 'utf-8');
-      }
-    }).catch(err => {
-      console.error(`Error saving vectors to ${this.filePath}:`, err);
-    });
+    this.writeLock = this.writeLock
+      .then(async () => {
+        this.ensureDir();
+        const list = Array.from(this.records.values());
+        await atomicWriteJson(this.filePath, list, { space: 0 });
+      })
+      .catch((err) => {
+        console.error(`Error saving vectors to ${this.filePath}:`, err);
+      });
 
     return this.writeLock;
   }

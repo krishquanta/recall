@@ -1,3 +1,5 @@
+import { AuditLogEntry } from './audit';
+
 export type EntityType =
   | 'Concept'
   | 'Method'
@@ -24,6 +26,21 @@ export type RelationType =
   | 'PROVES'
   | 'EQUIVALENT_TO'
   | 'RELATED_TO';
+
+export const VALID_RELATION_TYPES: readonly RelationType[] = [
+  'DEFINES',
+  'IS_A',
+  'PART_OF',
+  'PREREQUISITE_FOR',
+  'CAUSES',
+  'USES',
+  'CONTRADICTS',
+  'PROVES',
+  'EQUIVALENT_TO',
+  'RELATED_TO',
+] as const;
+
+export type CurationStatus = 'proposed' | 'verified' | 'rejected' | 'corrected';
 
 export interface EvidenceRef {
   docId: string;
@@ -60,7 +77,15 @@ export interface ClaimNode {
   confidence: number;
   evidence: EvidenceRef;
   createdAt: number;
+  // Phase 3 Extensions:
+  curationStatus?: CurationStatus;
+  curatedAt?: number;
+  curationReason?: string;
+  isStale?: boolean;
+  supersededByClaimId?: string;
 }
+
+export * from './claim';
 
 export interface RelationshipEdge {
   id: string;
@@ -72,6 +97,26 @@ export interface RelationshipEdge {
   evidence: EvidenceRef;
   claimId?: string;
   createdAt: number;
+  // Phase 3 additions:
+  curationStatus: CurationStatus;
+  curatedAt?: number;
+  curationReason?: string;
+  originalRelationType?: RelationType;
+  hasContradiction?: boolean;
+  contradictionId?: string;
+}
+
+export interface CurateEdgeParams {
+  action: 'accept' | 'reject' | 'correct';
+  relationType?: RelationType;
+  invertDirection?: boolean;
+  description?: string;
+  reason?: string;
+}
+
+export interface CurateEdgeResult {
+  edge: RelationshipEdge;
+  auditEntry: AuditLogEntry;
 }
 
 export interface ReviewQueueItem {

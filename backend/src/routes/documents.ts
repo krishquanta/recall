@@ -4,6 +4,7 @@ import { metadataStore } from '../store/MetadataStore';
 import { vectorStore } from '../store/VectorStore';
 import { keywordIndex } from '../store/KeywordIndex';
 import { graphStore } from '../store/GraphStore';
+import { reviewStore } from '../store/ReviewStore';
 import { extractionService } from '../services/ExtractionService';
 import { chunkingService } from '../services/ChunkingService';
 import { embeddingService } from '../services/EmbeddingService';
@@ -41,6 +42,8 @@ documentsRouter.delete('/:docId', async (req: Request, res: Response) => {
   keywordIndex.deleteByDocId(docId);
   graphStore.deleteByDocId(docId);
   await graphStore.save();
+  reviewStore.deleteByDocId(docId);
+  await reviewStore.save();
   await metadataStore.delete(docId);
 
   res.json({ ok: true, docId });

@@ -1,30 +1,23 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { Citation, RankedChunk } from '../types';
 import { graphStore } from '../store/GraphStore';
+import { keyManager, KeyManager } from './KeyManager';
 
 export class LLMService {
-  private genAI: GoogleGenerativeAI | null = null;
+  private keyManager: KeyManager;
+  private clientFactory?: (apiKey: string) => any;
 
-  constructor() {
-    if (process.env.NODE_ENV !== 'test') {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (apiKey && apiKey.trim() && apiKey !== 'your_key_here') {
-        this.genAI = new GoogleGenerativeAI(apiKey.trim());
-      }
-    }
+  constructor(km: KeyManager = keyManager, clientFactory?: (apiKey: string) => any) {
+    this.keyManager = km;
+    this.clientFactory = clientFactory;
   }
 
-  private getGenAI(): GoogleGenerativeAI | null {
-    if (process.env.NODE_ENV === 'test') {
-      return null;
-    }
-    if (!this.genAI) {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (apiKey && apiKey.trim() && apiKey !== 'your_key_here') {
-        this.genAI = new GoogleGenerativeAI(apiKey.trim());
-      }
-    }
-    return this.genAI;
+  public setKeyManager(km: KeyManager): void {
+    this.keyManager = km;
+  }
+
+  public setClientFactory(factory: (apiKey: string) => any): void {
+    this.clientFactory = factory;
   }
 
   /**
@@ -42,7 +35,6 @@ export class LLMService {
       };
     }
 
-    const genAI = this.getGenAI();
     const modelName = process.env.LLM_MODEL || 'gemini-3.8-flash';
 
     // 1. Format context chunks with 1-based indexing [1], [2], ...
@@ -82,6 +74,7 @@ export class LLMService {
         const nodeMap = new Map(subgraph.nodes.map((n) => [n.id, n.name]));
 
         const formattedEdges = subgraph.edges
+          .filter((e) => e.curationStatus !== 'rejected')
           .slice(0, 10)
           .map((e) => {
             const src = nodeMap.get(e.sourceId) || e.sourceId;
@@ -136,21 +129,34 @@ ANSWER:`;
 
     let rawAnswer = '';
 
-    if (genAI) {
-      try {
+    if (this.keyManager.getTotalKeyCount() === 0) {
+      const single = process.env.GEMINI_API_KEY;
+      const multi = process.env.GEMINI_API_KEYS;
+      if (
+        (single && single.trim() && single.trim() !== 'your_key_here') ||
+        (multi && multi.trim())
+      ) {
+        this.keyManager.reset();
+      }
+    }
+
+    const isMock =
+      (process.env.NODE_ENV === 'test' && !this.clientFactory) ||
+      this.keyManager.getTotalKeyCount() === 0;
+
+    if (isMock) {
+      rawAnswer = this.mockAnswer(question, chunks);
+    } else {
+      rawAnswer = await this.keyManager.executeWithFailover(async (apiKey) => {
+        const genAI = this.clientFactory ? this.clientFactory(apiKey) : new GoogleGenerativeAI(apiKey);
         const model = genAI.getGenerativeModel({
           model: modelName,
           systemInstruction: systemInstruction,
         });
 
         const result = await model.generateContent(userPrompt);
-        rawAnswer = result.response.text();
-      } catch (err: any) {
-        console.warn(`Gemini LLM answer error, falling back to local extractor:`, err?.message || err);
-        rawAnswer = this.mockAnswer(question, chunks);
-      }
-    } else {
-      rawAnswer = this.mockAnswer(question, chunks);
+        return result.response.text();
+      });
     }
 
     const citations = this.extractCitations(rawAnswer, chunks);

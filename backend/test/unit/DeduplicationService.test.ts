@@ -242,4 +242,47 @@ describe('DeduplicationService Unit Tests', () => {
     expect(updated?.aliases).toContain('Simple Linear Regression');
     expect(updated?.evidence.length).toBe(2);
   });
+
+  it('should batch-embed unseen candidate entities across extraction batch in a single call', async () => {
+    let batchCallCount = 0;
+    const batchNames: string[] = [];
+
+    const mockEmbedder = new EmbeddingService();
+    mockEmbedder.embedBatch = async (names: string[]) => {
+      batchCallCount++;
+      batchNames.push(...names);
+      return names.map((n) => mockEmbedder.generateMockEmbedding(n));
+    };
+
+    const mockGraph = new GraphStore(graphFile);
+    const mockReviews = new ReviewStore(reviewFile);
+    const batchService = new DeduplicationService(mockGraph, mockReviews, mockEmbedder);
+
+    const candidates = [
+      {
+        name: `Batch Concept 1 ${Date.now()}`,
+        type: 'Concept' as const,
+        aliases: [],
+        evidence: mockEvidence,
+      },
+      {
+        name: `Batch Concept 2 ${Date.now()}`,
+        type: 'Concept' as const,
+        aliases: [],
+        evidence: mockEvidence,
+      },
+      {
+        name: `Batch Concept 3 ${Date.now()}`,
+        type: 'Concept' as const,
+        aliases: [],
+        evidence: mockEvidence,
+      },
+    ];
+
+    const nameToId = await batchService.resolveEntities(candidates);
+    expect(nameToId.size).toBe(6); // 3 original + 3 lowercase
+    expect(batchCallCount).toBe(1);
+    expect(batchNames.length).toBe(3);
+    expect(batchService.getBatchEmbeddingCallCount()).toBe(1);
+  });
 });

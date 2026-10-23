@@ -7,6 +7,10 @@ import { StatusToast } from './components/StatusToast';
 import { GraphCanvas } from './components/Graph/GraphCanvas';
 import { ChatHeaderWithViewSelector } from './components/Header/ChatHeaderWithViewSelector';
 import { ReviewQueueModal } from './components/Graph/ReviewQueueModal';
+import { SettingsModal } from './components/Settings/SettingsModal';
+import { ContradictionDrawer } from './components/Graph/ContradictionDrawer';
+import { CorrectRelationModal } from './components/Graph/CorrectRelationModal';
+import { VersionHistoryModal } from './components/Graph/VersionHistoryModal';
 import { useAppStore } from './store/appStore';
 import { BookOpen, X } from 'lucide-react';
 import clsx from 'clsx';
@@ -22,8 +26,12 @@ export const App: React.FC = () => {
       {/* Toast notifications container */}
       <StatusToast />
 
-      {/* Global Review Queue Modal */}
+      {/* Global Modals & Drawers */}
       <ReviewQueueModal />
+      <SettingsModal />
+      <ContradictionDrawer />
+      <CorrectRelationModal />
+      <VersionHistoryModal />
 
       {/* Mobile Sidebar Backdrop */}
       {sidebarOpen && (

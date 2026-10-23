@@ -9,30 +9,24 @@ import {
   ClaimModality,
   RelationType,
 } from '../types';
+import { keyManager, KeyManager } from './KeyManager';
 
 export class GraphExtractionService {
-  private genAI: GoogleGenerativeAI | null = null;
+  private keyManager: KeyManager;
+  private clientFactory?: (apiKey: string) => any;
+  private extractionCallCount: number = 0;
 
-  constructor() {
-    if (process.env.NODE_ENV !== 'test') {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (apiKey && apiKey.trim() && apiKey !== 'your_key_here') {
-        this.genAI = new GoogleGenerativeAI(apiKey.trim());
-      }
-    }
+  constructor(km: KeyManager = keyManager, clientFactory?: (apiKey: string) => any) {
+    this.keyManager = km;
+    this.clientFactory = clientFactory;
   }
 
-  private getGenAI(): GoogleGenerativeAI | null {
-    if (process.env.NODE_ENV === 'test') {
-      return null;
-    }
-    if (!this.genAI) {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (apiKey && apiKey.trim() && apiKey !== 'your_key_here') {
-        this.genAI = new GoogleGenerativeAI(apiKey.trim());
-      }
-    }
-    return this.genAI;
+  public setKeyManager(km: KeyManager): void {
+    this.keyManager = km;
+  }
+
+  public setClientFactory(factory: (apiKey: string) => any): void {
+    this.clientFactory = factory;
   }
 
   /**
@@ -248,18 +242,82 @@ export class GraphExtractionService {
     return { entities, claims, relationships };
   }
 
+  public getExtractionCallCount(): number {
+    return this.extractionCallCount;
+  }
+
+  public resetCallCount(): void {
+    this.extractionCallCount = 0;
+  }
+
   /**
-   * Extracts knowledge graph payload from chunk text using Gemini API or fallback mock.
+   * Mock extraction for a multi-chunk window.
+   * Extracts entities, claims, and relations across all chunks in the window,
+   * guaranteeing that every exactQuote is a verbatim substring of one of the chunks.
    */
-  public async extract(chunk: Chunk): Promise<ExtractedGraphPayload> {
-    const text = chunk.text;
-    if (!text || text.trim().length === 0) {
+  public extractMockWindow(chunks: Chunk[]): ExtractedGraphPayload {
+    if (!chunks || chunks.length === 0) {
       return { entities: [], claims: [], relationships: [] };
     }
 
-    const genAI = this.getGenAI();
-    if (!genAI) {
-      return this.extractMock(chunk);
+    const combinedEntities: ExtractedEntity[] = [];
+    const combinedClaims: ExtractedClaim[] = [];
+    const combinedRelationships: ExtractedRelationship[] = [];
+    const seenEntityNames = new Set<string>();
+
+    for (const chunk of chunks) {
+      const payload = this.extractMock(chunk);
+      for (const ent of payload.entities) {
+        const norm = ent.name.toLowerCase().trim();
+        if (!seenEntityNames.has(norm)) {
+          seenEntityNames.add(norm);
+          combinedEntities.push(ent);
+        }
+      }
+      combinedClaims.push(...payload.claims);
+      combinedRelationships.push(...payload.relationships);
+    }
+
+    return {
+      entities: combinedEntities,
+      claims: combinedClaims,
+      relationships: combinedRelationships,
+    };
+  }
+
+  /**
+   * Extracts knowledge graph payload from a multi-chunk window (2–4 chunks, ~2,000 tokens)
+   * in a single LLM extraction call, reducing extraction calls by 60–75%.
+   */
+  public async extractWindow(chunks: Chunk[]): Promise<ExtractedGraphPayload> {
+    if (!chunks || chunks.length === 0) {
+      return { entities: [], claims: [], relationships: [] };
+    }
+
+    this.extractionCallCount++;
+
+    const combinedText = chunks
+      .map((c) => c.text)
+      .filter((t) => t && t.trim().length > 0)
+      .join('\n\n');
+
+    if (!combinedText.trim()) {
+      return { entities: [], claims: [], relationships: [] };
+    }
+
+    if (this.keyManager.getTotalKeyCount() === 0) {
+      const single = process.env.GEMINI_API_KEY;
+      const multi = process.env.GEMINI_API_KEYS;
+      if (
+        (single && single.trim() && single.trim() !== 'your_key_here') ||
+        (multi && multi.trim())
+      ) {
+        this.keyManager.reset();
+      }
+    }
+
+    if (this.keyManager.getTotalKeyCount() === 0) {
+      return this.extractMockWindow(chunks);
     }
 
     const modelName = process.env.LLM_MODEL || 'gemini-2.0-flash';
@@ -356,10 +414,11 @@ CRITICAL INSTRUCTIONS:
 4. Relation types must be chosen from the strict enum: DEFINES, IS_A, PART_OF, PREREQUISITE_FOR, CAUSES, USES, CONTRADICTS, PROVES, EQUIVALENT_TO, RELATED_TO.
 
 PASSAGE:
-"""${text.slice(0, 8000)}"""
+"""${combinedText.slice(0, 24000)}"""
 `;
 
-    try {
+    return await this.keyManager.executeWithFailover(async (apiKey) => {
+      const genAI = this.clientFactory ? this.clientFactory(apiKey) : new GoogleGenerativeAI(apiKey);
       const model = genAI.getGenerativeModel({
         model: modelName,
         generationConfig: {
@@ -372,19 +431,23 @@ PASSAGE:
       const response = await model.generateContent(prompt);
       const textOutput = response.response?.text();
       if (!textOutput) {
-        return this.extractMock(chunk);
+        throw new Error('Gemini graph extraction returned empty response');
       }
 
       const parsed = JSON.parse(textOutput) as ExtractedGraphPayload;
       if (!parsed || !Array.isArray(parsed.entities)) {
-        return this.extractMock(chunk);
+        throw new Error('Gemini graph extraction returned invalid JSON schema');
       }
 
       return parsed;
-    } catch (err: any) {
-      console.warn('Gemini graph extraction failed, falling back to mock extractor:', err?.message || err);
-      return this.extractMock(chunk);
-    }
+    });
+  }
+
+  /**
+   * Extracts knowledge graph payload from single chunk text (delegates to extractWindow).
+   */
+  public async extract(chunk: Chunk): Promise<ExtractedGraphPayload> {
+    return this.extractWindow([chunk]);
   }
 }
 

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { searchService } from '../services/SearchService';
 import { llmService } from '../services/LLMService';
+import { cacheService } from '../services/CacheService';
 import { AskRequest, AskResponse } from '../types';
 
 export const askRouter = Router();
@@ -18,11 +19,25 @@ askRouter.post('/', async (req: Request<{}, {}, AskRequest>, res: Response): Pro
     const trimmed = question.trim();
     const filterDocIds = Array.isArray(docIds) ? docIds : undefined;
 
+    // Check Q&A cache first
+    const cachedAnswer = cacheService.getQA(trimmed, filterDocIds);
+    if (cachedAnswer) {
+      res.json({
+        answer: cachedAnswer,
+        citations: [],
+        cached: true,
+      });
+      return;
+    }
+
     // 1. Retrieve most relevant chunks using hybrid search
     const chunks = await searchService.hybridSearch(trimmed, filterDocIds, 8, 0.6);
 
     // 2. Generate answer with citation enforcement
     const result = await llmService.generateAnswer(trimmed, chunks);
+
+    // Cache generated answer
+    await cacheService.setQA(trimmed, filterDocIds, result.answer);
 
     const response: AskResponse = {
       answer: result.answer,

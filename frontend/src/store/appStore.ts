@@ -28,7 +28,13 @@ interface AppState {
   isThinking: boolean;
   sidebarOpen: boolean;
   previewOpen: boolean;
+  isSettingsOpen: boolean;
   toasts: Toast[];
+
+  // Settings actions
+  openSettings: () => void;
+  closeSettings: () => void;
+  toggleSettings: () => void;
 
   // Document actions
   setDocuments: (documents: Document[]) => void;
@@ -81,6 +87,7 @@ export const useAppStore = create<AppState>()(
       isThinking: false,
       sidebarOpen: true,
       previewOpen: false,
+      isSettingsOpen: false,
       toasts: [],
 
       setDocuments: (documents) => set({ documents }),
@@ -178,6 +185,10 @@ export const useAppStore = create<AppState>()(
 
       setPreviewOpen: (previewOpen) => set({ previewOpen }),
       togglePreview: () => set((state) => ({ previewOpen: !state.previewOpen })),
+
+      openSettings: () => set({ isSettingsOpen: true }),
+      closeSettings: () => set({ isSettingsOpen: false }),
+      toggleSettings: () => set((state) => ({ isSettingsOpen: !state.isSettingsOpen })),
 
       setIsUploading: (isUploading) => set({ isUploading }),
 
