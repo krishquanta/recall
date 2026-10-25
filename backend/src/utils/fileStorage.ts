@@ -180,6 +180,37 @@ export async function atomicWriteJson(
 }
 
 /**
+ * Synchronous atomic write with collision-resistant temp name, rename fallback,
+ * safeUnlinkSync with retries, and guaranteed finally cleanup.
+ */
+export function safeAtomicWriteSync(filePath: string, content: string): void {
+  const dir = path.dirname(filePath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+
+  const tempPath = `${filePath}.tmp.${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+  try {
+    fs.writeFileSync(tempPath, content, 'utf-8');
+    try {
+      fs.renameSync(tempPath, filePath);
+    } catch {
+      fs.copyFileSync(tempPath, filePath);
+      safeUnlinkSync(tempPath);
+    }
+  } catch (err) {
+    try {
+      fs.writeFileSync(filePath, content, 'utf-8');
+    } catch (directErr) {
+      console.error(`Direct write fallback failed for ${filePath}:`, directErr);
+      throw directErr;
+    }
+  } finally {
+    safeUnlinkSync(tempPath);
+  }
+}
+
+/**
  * Safely appends data to a file with retries to tolerate Windows file locks (EBUSY, EPERM, EACCES).
  */
 export async function safeAppendFile(

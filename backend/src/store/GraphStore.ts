@@ -350,6 +350,23 @@ export class GraphStore {
     return undefined;
   }
 
+  public findEntityByName(name: string): EntityNode | undefined {
+    return this.getEntityByName(name);
+  }
+
+  public getAllClaims(): ClaimNode[] {
+    if (!this.isLoaded) this.loadSync();
+    return Array.from(this.claims.values());
+  }
+
+  public removeEdge(id: string): boolean {
+    return this.deleteEdge(id);
+  }
+
+  public removeEntity(id: string): void {
+    this.deleteEntity(id);
+  }
+
   public getAll(): { nodes: EntityNode[]; edges: RelationshipEdge[]; claims: ClaimNode[] } {
     if (!this.isLoaded) this.loadSync();
     return {

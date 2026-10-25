@@ -270,6 +270,14 @@ export class AuditStore implements IAuditStore {
   }
 
   /**
+   * Returns all audit entries in order.
+   */
+  public getAll(): AuditLogEntry[] {
+    if (!this.isLoaded) this.loadSync();
+    return [...this.entries];
+  }
+
+  /**
    * Total count of valid audit entries currently stored.
    */
   public count(): number {

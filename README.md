@@ -1,6 +1,6 @@
 # Recall 🧠
 
-Recall is a local-first, document-aware AI study companion and evidentiary Knowledge Graph. Upload your notes, question banks, PDFs, slides, and handwritten pages — then ask anything in plain English to get answers with clickable citations, or explore an interactive concept graph with sentence-level verifiable evidence.
+Recall is a local-first, document-aware AI study companion and evidentiary Knowledge Graph. Upload your notes, question banks, PDFs, slides, and handwritten pages — then ask anything in plain English to get answers with clickable citations, explore an interactive concept graph with sentence-level verifiable evidence, or dispatch an autonomous research agent to investigate knowledge blind spots and resolve contradictions via bounded web discovery.
 
 ---
 
@@ -37,32 +37,41 @@ Recall is a local-first, document-aware AI study companion and evidentiary Knowl
    - Powered by **`gemini-3.8-flash`** enforcing strict grounding.
    - Standard citation chips (`[1]`, `[2]`) jump directly to the exact page/slide/line in the Source Preview panel.
    - Graph relation chips (`[🔗 Source -> RELATION -> Target]`) highlight related concepts in the graph and open evidentiary quote cards.
-8. **Gemini Key Pool Optimizer & Persistent Two-Tier Caching**:
+7. **Gemini Key Pool Optimizer & Persistent Two-Tier Caching**:
    - Multi-key rotation pool with graceful round-robin and automatic 429 rate-limit failover.
    - Persistent two-tier cache (in-memory LRU + disk persistence) for embeddings and Q&A prompt responses, reducing billable API requests by >90%.
    - In-app telemetry and key management settings modal.
-9. **Cross-Source Claim Comparison & Consensus Scoring**:
+8. **Cross-Source Claim Comparison & Consensus Scoring**:
    - Clusters atomic claims across multiple documents mentioning identical canonical entities.
    - Semantic topic grouping with multi-source consensus scoring $C \in [0.0, 1.0]$.
-10. **Contradiction & Staleness Detection Engine**:
+9. **Contradiction & Staleness Detection Engine**:
    - Automated detection of factual divergence, numerical contradictions, and opposing relation types across distinct source documents.
    - Temporal markers and edition tracking to flag superseded or outdated claims.
    - Right-hand **Contradiction Drawer** displaying side-by-side comparative quotes with resolution actions.
-11. **Interactive Relationship Curation Suite**:
-   - One-click curation directly from the Graph Canvas: **Accept** (verified), **Reject** (soft delete with search isolation), or **Correct** (swap direction, modify relation type, or attach custom notes).
-12. **Immutable Append-Only Audit Trail & Atomic Rollback**:
-   - Every mutation is logged to `data/audit_log.jsonl` with before/after state snapshots.
-   - One-click topological-safe rollback to revert any curation, merge, or contradiction resolution.
+10. **Interactive Relationship Curation Suite**:
+    - One-click curation directly from the Graph Canvas: **Accept** (verified), **Reject** (soft delete with search isolation), or **Correct** (swap direction, modify relation type, or attach custom notes).
+11. **Immutable Append-Only Audit Trail & Atomic Rollback**:
+    - Every mutation is logged to `data/audit_log.jsonl` with before/after state snapshots.
+    - One-click topological-safe rollback to revert any curation, merge, or contradiction resolution.
+12. **Autonomous Research Agent, Gap Investigation & Bounded Web Discovery (Phase 4)**:
+    - **Continuous Knowledge Gap Detection**: Continuously audits graph topology to detect isolated entities (degree 0), weak single-source claims, and unresolved Phase 3 contradictions, prioritizing them into an interactive **Investigation Queue**.
+    - **Bounded Multi-Source Web Discovery**: Queries DuckDuckGo, Wikipedia REST API, and arXiv API under strict query budgets (max 3 search queries, max 5 fetched pages, 2-minute wall-clock timeout).
+    - **Hard SSRF & Security Defense**: Multi-tier pre-flight URL validation and post-redirect hostname verification blocks RFC 1918 private IPv4/IPv6 ranges, loopback (`127.0.0.1`, `localhost`), link-local IPs, cloud metadata endpoints (`169.254.169.254`), and port scanning.
+    - **Prompt Injection Isolation**: Sanitizes untrusted web HTML/markdown and structurally isolates external text from system directives during LLM entity and relation extraction.
+    - **Sourced Research Dossier & Delta Summary**: Synthesizes a structured markdown dossier with clickable source links, retrieval timestamps, and an explicit *"What changed and why"* diff section.
+    - **Human-in-the-Loop Staged Graph Review**: Interactive two-tab **Research Review Drawer** with individual `[Accept]` and `[Reject]` toggles for each proposed entity, typed relation, and contradiction resolution before committing to `data/graph.json`.
+    - **Hybrid Document & RAG Ingestion**: Ingests accepted research dossiers into `MetadataStore`, `VectorStore`, and `KeywordIndex` as synthetic documents (`sourceType: 'web'`), enabling immediate RAG Q&A retrieval with verbatim citation jumps. Every research import creates an immutable entry in `data/audit_log.jsonl` with topological rollback safety.
+    - **Domain Allowlist & Budget Management**: Configurable settings tab in Settings Modal to manage approved domain wildcards (e.g. `*.edu`, `*.gov`, `wikipedia.org`, `arxiv.org`), toggling specific search providers, and setting query budgets.
 13. **Three-Panel Browser Workspace**:
-   - **Left Panel (240px)**: Library sidebar with drag-and-drop upload, document list, and context menu.
-   - **Center Panel (Flex)**: Toggleable between conversational chat and the interactive Knowledge Graph canvas.
-   - **Right Panel (380px)**: Source Preview panel with PDF viewer, image viewer, text quote highlighter, and evidence cards.
+    - **Left Panel (240px)**: Library sidebar with drag-and-drop upload, document list with `🌐 Web` and `🖼 OCR` badges, and context menu.
+    - **Center Panel (Flex)**: Toggleable between conversational chat and the interactive Knowledge Graph canvas.
+    - **Right Panel (380px)**: Source Preview panel with PDF viewer, image viewer, text quote highlighter, and evidence cards.
 14. **Real-Time Processing Status**:
-   - Server-Sent Events (SSE) stream real-time progress (`Saving` → `Extracting` → `Chunking` → `Embedding` → `Graph Extraction` → `Done`).
-   - Clear visual status chips (✅ ready, ⏳ progress bar, ❌ error with tooltip).
+    - Server-Sent Events (SSE) stream real-time progress (`Saving` → `Extracting` → `Chunking` → `Embedding` → `Graph Extraction` → `Done`).
+    - Clear visual status chips (✅ ready, ⏳ progress bar, ❌ error with tooltip).
 15. **Math & Multilingual Output**:
-   - KaTeX renders inline and block LaTeX math, vectors, matrices, and special symbols.
-   - Automatic multilingual responses in the user's language.
+    - KaTeX renders inline and block LaTeX math, vectors, matrices, and special symbols.
+    - Automatic multilingual responses in the user's language.
 
 ---
 
@@ -72,27 +81,30 @@ Recall is a local-first, document-aware AI study companion and evidentiary Knowl
 recall/
 ├── backend/
 │   ├── src/
-│   │   ├── routes/          # upload (SSE), documents, search, ask, graph, curation, claims, contradictions, audit, settings
+│   │   ├── routes/          # upload (SSE), documents, search, ask, graph, curation, claims, contradictions, audit, settings, research
 │   │   ├── services/        # Extraction, Chunking, Embedding, Search, LLM,
 │   │   │                    # GraphExtraction, ProvenanceValidator, Deduplication, ReviewQueue,
 │   │   │                    # KeyManager, CacheService, ClaimComparisonService,
-│   │   │                    # ContradictionDetectionService, RelationshipCurationService, AuditService
-│   │   ├── store/           # MetadataStore, VectorStore, KeywordIndex, GraphStore, ReviewStore, ContradictionStore, AuditStore
-│   │   ├── types/           # Domain, Graph, Claim, Contradiction, and Audit TypeScript interfaces
+│   │   │                    # ContradictionDetectionService, RelationshipCurationService, AuditService,
+│   │   │                    # GapDetectionService, ResearchOrchestratorService, SearchManager, UrlSecurityValidator, ResearchImportService
+│   │   ├── store/           # MetadataStore, VectorStore, KeywordIndex, GraphStore, ReviewStore, ContradictionStore, AuditStore, ResearchProposalStore
+│   │   ├── types/           # Domain, Graph, Claim, Contradiction, Audit, and Research TypeScript interfaces
+│   │   ├── utils/           # Atomic file storage & mutex locks
 │   │   └── index.ts         # Express server entry point (port 3001)
-│   ├── uploads/             # Raw file storage
-│   ├── data/                # Vector store, metadata, graph, contradictions, and audit log persistence
-│   └── test/                # Unit & integration test suites (374 passing tests)
+│   ├── uploads/             # Raw and synthetic file storage
+│   ├── data/                # Vector store, metadata, graph, contradictions, research settings, and audit log persistence
+│   └── test/                # Unit & integration test suites (422 passing tests across 32 suites)
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── api/             # Typed fetch, SSE client & Phase 3 endpoints
+│   │   ├── api/             # Typed fetch, SSE client & research endpoints
 │   │   ├── components/      # UI components
-│   │   │   ├── Sidebar/     # Upload dropzone, document list & context menus
+│   │   │   ├── Sidebar/     # Upload dropzone, document list (with web badges) & context menus
 │   │   │   ├── Chat/        # Chat bubbles, citation chips, relation chips, math content
 │   │   │   ├── Graph/       # Canvas, nodes, edges, popovers, modals, contradiction drawer, version history
-│   │   │   ├── Header/      # View mode selector, contradiction badge, history modal trigger
-│   │   │   ├── Settings/    # Gemini key pool optimizer and cache telemetry settings modal
+│   │   │   ├── Research/    # InvestigationQueueModal, ResearchProgressPanel, ResearchReviewDrawer, ResearchSettingsTab
+│   │   │   ├── Header/      # View mode selector, contradiction badge, gaps badge, history modal trigger
+│   │   │   ├── Settings/    # Gemini key pool optimizer, cache telemetry & research domain settings modal
 │   │   │   ├── Preview/     # PDF viewer, image viewer, text highlighter, evidence cards
 │   │   │   └── StatusToast  # Real-time processing toast alerts
 │   │   ├── hooks/           # useUpload, useDocuments, useChat, useSSE
@@ -103,7 +115,8 @@ recall/
 └── plan/                    # Full design specifications
     ├── phase - 1/           # Ingestion, RAG, Citations, UI/UX
     ├── phase - 2/           # Knowledge Graph, Provenance DoD, Deduplication, Review Queue, Key Optimization
-    └── phase 3/             # Claim Comparison, Contradiction Engine, Curation Suite, Audit Rollback
+    ├── phase 3/             # Claim Comparison, Contradiction Engine, Curation Suite, Audit Rollback
+    └── phase 4/             # Autonomous Research Agent, Gap Investigation & Bounded Web Discovery
 ```
 
 ---
@@ -161,3 +174,8 @@ pnpm --prefix backend test
 4. **Knowledge Graph Extraction**: Switch to the **Knowledge Graph** view → verify entities (concepts, methods, theorems) and typed directional edges are rendered on the canvas.
 5. **Strict Provenance (DoD)**: Click any node or relationship edge in the graph → verify the Evidence Card displays the verbatim source passage, document ID, and page/line coordinates.
 6. **Deduplication & Review Queue**: Ingest documents with common acronyms (e.g., *"Singular Value Decomposition"* and *"SVD"*) → verify auto-merge. For borderline entities ($0.78 \le \text{score} < 0.92$), open the Review Queue modal to approve, separate, or redirect candidate entities.
+7. **Autonomous Research Agent & Bounded Web Discovery (Phase 4 DoD)**:
+   - In Knowledge Graph view, click the **"🔍 Gaps"** badge in the header → verify the Investigation Queue modal opens and ranks detected blind spots and unresolved contradictions.
+   - Click **"Investigate"** on any gap or contradiction alert → verify the progress panel tracks query formulation, budget consumption, and SSRF security checks.
+   - In the **Research Review Drawer**, inspect the Executive Summary, "What changed and why" delta, and source citations.
+   - Toggle accept/reject on proposed entities and relationships → click **"Import to Knowledge Graph"** → verify the synthetic web document appears in the Library with a `🌐 Web` badge, entities & edges merge into the graph, and the import is recorded in the Audit log with atomic rollback support.

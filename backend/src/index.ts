@@ -15,6 +15,7 @@ import { curationRouter } from './routes/curation';
 import { contradictionsRouter } from './routes/contradictions';
 import { claimsRouter } from './routes/claims';
 import { settingsRouter } from './routes/settings';
+import { researchRouter } from './routes/research';
 import { metadataStore } from './store/MetadataStore';
 import { vectorStore } from './store/VectorStore';
 import { keywordIndex } from './store/KeywordIndex';
@@ -187,6 +188,7 @@ app.use('/api/graph', curationRouter);
 app.use('/api/graph/contradictions', contradictionsRouter);
 app.use('/api/graph/claims', claimsRouter);
 app.use('/api/settings', settingsRouter);
+app.use('/api/research', researchRouter);
 
 // Global Error Handler
 app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

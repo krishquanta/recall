@@ -36,6 +36,10 @@ export class KeywordIndex {
     }
   }
 
+  public addDocument(docId: string, chunks: Chunk[]): void {
+    this.addChunks(chunks);
+  }
+
   public deleteByDocId(docId: string): void {
     const toRemove: Chunk[] = [];
     for (const [chunkId, chunk] of this.chunks.entries()) {

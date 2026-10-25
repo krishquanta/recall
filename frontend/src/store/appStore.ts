@@ -9,6 +9,8 @@ import {
   Toast,
   PreviewableEvidence,
   EvidenceRef,
+  InvestigationGap,
+  ResearchProposal,
 } from '../types';
 
 interface AppState {
@@ -69,6 +71,27 @@ interface AppState {
   // Toasts
   addToast: (toast: Omit<Toast, 'id'>) => void;
   removeToast: (id: string) => void;
+
+  // Phase 4 Autonomous Research
+  researchGaps: InvestigationGap[];
+  activeProposal: ResearchProposal | null;
+  isResearching: boolean;
+  researchProgress: { queriesUsed: number; sourcesFetched: number; elapsedMs: number } | null;
+  isQueueModalOpen: boolean;
+  isReviewDrawerOpen: boolean;
+
+  fetchResearchGaps: () => Promise<void>;
+  startResearchTask: (question: string, gapId?: string) => Promise<void>;
+  importAcceptedUpdates: (
+    proposalId: string,
+    acceptedEntityIds: string[],
+    acceptedRelationIds: string[],
+    acceptedResolutionIds: string[]
+  ) => Promise<void>;
+  rejectProposal: (proposalId: string) => Promise<void>;
+  setQueueModalOpen: (open: boolean) => void;
+  setReviewDrawerOpen: (open: boolean) => void;
+  clearActiveProposal: () => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -210,6 +233,192 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           toasts: state.toasts.filter((t) => t.id !== id),
         })),
+
+      // Phase 4 Autonomous Research
+      researchGaps: [],
+      activeProposal: null,
+      isResearching: false,
+      researchProgress: null,
+      isQueueModalOpen: false,
+      isReviewDrawerOpen: false,
+
+      fetchResearchGaps: async () => {
+        try {
+          const res = await fetch('/api/research/gaps');
+          if (res.ok) {
+            const data = await res.json();
+            set({ researchGaps: data.gaps || [] });
+          }
+        } catch {
+          // ignore error
+        }
+      },
+
+      startResearchTask: async (question: string, gapId?: string) => {
+        set({
+          isResearching: true,
+          researchProgress: { queriesUsed: 1, sourcesFetched: 0, elapsedMs: 0 },
+        });
+
+        const startTime = Date.now();
+        const interval = setInterval(() => {
+          set((state) => {
+            if (!state.isResearching || !state.researchProgress) return {};
+            return {
+              researchProgress: {
+                ...state.researchProgress,
+                elapsedMs: Date.now() - startTime,
+              },
+            };
+          });
+        }, 1000);
+
+        try {
+          const res = await fetch('/api/research/investigate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question, gapId }),
+          });
+
+          clearInterval(interval);
+
+          if (res.status === 408) {
+            const data = await res.json();
+            set({
+              isResearching: false,
+              researchProgress: null,
+            });
+            const { addToast } = useAppStore.getState();
+            addToast({
+              type: 'warning',
+              title: 'Insufficient Sources',
+              message: data.error || 'No approved sources could be retrieved within budget.',
+            });
+            return;
+          }
+
+          if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || 'Research task failed');
+          }
+
+          const data = await res.json();
+          set({
+            isResearching: false,
+            researchProgress: null,
+            activeProposal: data.proposal,
+            isQueueModalOpen: false,
+            isReviewDrawerOpen: true,
+          });
+
+          const { addToast } = useAppStore.getState();
+          addToast({
+            type: 'success',
+            title: 'Research Completed',
+            message: `Retrieved ${data.proposal?.report?.sources?.length || 0} source(s). Review proposed updates.`,
+          });
+        } catch (err: any) {
+          clearInterval(interval);
+          set({ isResearching: false, researchProgress: null });
+          const { addToast } = useAppStore.getState();
+          addToast({
+            type: 'error',
+            title: 'Research Task Error',
+            message: err?.message || 'Failed to complete research task',
+          });
+        }
+      },
+
+      importAcceptedUpdates: async (
+        proposalId: string,
+        acceptedEntityIds: string[],
+        acceptedRelationIds: string[],
+        acceptedResolutionIds: string[]
+      ) => {
+        try {
+          const res = await fetch('/api/research/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              proposalId,
+              acceptedEntityTempIds: acceptedEntityIds,
+              acceptedRelationTempIds: acceptedRelationIds,
+              acceptedContradictionIds: acceptedResolutionIds,
+            }),
+          });
+
+          if (!res.ok) {
+            const data = await res.json();
+            throw new Error(data.error || 'Failed to import updates');
+          }
+
+          const data = await res.json();
+
+          // Refresh documents and gaps
+          const docRes = await fetch('/api/documents');
+          if (docRes.ok) {
+            const docs = await docRes.json();
+            set({ documents: docs });
+          }
+
+          const { fetchResearchGaps, addToast } = useAppStore.getState();
+          await fetchResearchGaps();
+
+          // Refresh graph data, contradictions, and history in graphStore so canvas updates
+          try {
+            const { useGraphStore } = await import('./graphStore');
+            const graphStore = useGraphStore.getState();
+            await Promise.all([
+              graphStore.fetchGraphData(),
+              graphStore.fetchContradictions(),
+              graphStore.fetchAuditHistory(),
+            ]);
+          } catch {
+            // Ignore if graphStore not available
+          }
+
+          set({
+            activeProposal: null,
+            isReviewDrawerOpen: false,
+          });
+
+          addToast({
+            type: 'success',
+            title: 'Import Successful',
+            message: `Imported ${data.importedEntitiesCount} concepts, ${data.importedRelationsCount} relations into knowledge base.`,
+          });
+        } catch (err: any) {
+          const { addToast } = useAppStore.getState();
+          addToast({
+            type: 'error',
+            title: 'Import Failed',
+            message: err?.message || 'Error importing research updates',
+          });
+        }
+      },
+
+      rejectProposal: async (proposalId: string) => {
+        try {
+          await fetch('/api/research/reject', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ proposalId }),
+          });
+          set({
+            activeProposal: null,
+            isReviewDrawerOpen: false,
+          });
+        } catch {
+          set({
+            activeProposal: null,
+            isReviewDrawerOpen: false,
+          });
+        }
+      },
+
+      setQueueModalOpen: (isQueueModalOpen) => set({ isQueueModalOpen }),
+      setReviewDrawerOpen: (isReviewDrawerOpen) => set({ isReviewDrawerOpen }),
+      clearActiveProposal: () => set({ activeProposal: null }),
     }),
     {
       name: 'recall-storage',

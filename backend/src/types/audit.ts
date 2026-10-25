@@ -21,10 +21,12 @@ export type AuditActionType =
   // Contradiction engine actions
   | 'contradiction_resolved'
   | 'contradiction_resolve'
+  // Research agent actions
+  | 'research_import'
   // Rollback action
   | 'rollback';
 
-export type AuditTargetType = 'relationship' | 'entity' | 'claim' | 'contradiction';
+export type AuditTargetType = 'relationship' | 'entity' | 'claim' | 'contradiction' | 'research';
 
 export interface AuditLogEntry {
   auditId: string;              // UUID v4 unique identifier

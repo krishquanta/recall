@@ -24,6 +24,9 @@ export interface Document {
   uploadedAt: string;
   status: ProcessingStatus;
   filePath?: string;
+  sourceType?: 'upload' | 'web';
+  sourceUrl?: string;
+  retrievedAt?: string;
 }
 
 export interface Page {
@@ -112,3 +115,4 @@ export interface SearchResponse {
 export * from './graph';
 export * from './audit';
 export * from './claim';
+export * from './research';

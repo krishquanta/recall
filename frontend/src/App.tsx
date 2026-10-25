@@ -11,6 +11,8 @@ import { SettingsModal } from './components/Settings/SettingsModal';
 import { ContradictionDrawer } from './components/Graph/ContradictionDrawer';
 import { CorrectRelationModal } from './components/Graph/CorrectRelationModal';
 import { VersionHistoryModal } from './components/Graph/VersionHistoryModal';
+import { InvestigationQueueModal } from './components/Research/InvestigationQueueModal';
+import { ResearchReviewDrawer } from './components/Research/ResearchReviewDrawer';
 import { useAppStore } from './store/appStore';
 import { BookOpen, X } from 'lucide-react';
 import clsx from 'clsx';
@@ -32,6 +34,8 @@ export const App: React.FC = () => {
       <ContradictionDrawer />
       <CorrectRelationModal />
       <VersionHistoryModal />
+      <InvestigationQueueModal />
+      <ResearchReviewDrawer />
 
       {/* Mobile Sidebar Backdrop */}
       {sidebarOpen && (

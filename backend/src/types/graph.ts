@@ -83,6 +83,9 @@ export interface ClaimNode {
   curationReason?: string;
   isStale?: boolean;
   supersededByClaimId?: string;
+  subject?: string;
+  stalenessReason?: string;
+  updatedAt?: number;
 }
 
 export * from './claim';

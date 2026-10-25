@@ -383,13 +383,29 @@ describe('Milestone 5 Tier 5 Adversarial Hardening: Core Optimization Services',
   // SUITE 4: Batch Entity Deduplication Slicing at 100-Item Boundaries & Cache Pre-Filtering
   // =========================================================================
   describe('4. DeduplicationService: 100-Item Slicing & Cache Pre-Filtering', () => {
+    const testDir = path.join(process.cwd(), 'test-data-m5-stress');
+    const graphFile = path.join(testDir, 'graph.json');
+    const reviewFile = path.join(testDir, 'review_queue.json');
     let mockGraph: GraphStore;
     let mockReview: ReviewStore;
 
     beforeEach(() => {
+      if (!fs.existsSync(testDir)) {
+        fs.mkdirSync(testDir, { recursive: true });
+      }
+      if (fs.existsSync(graphFile)) fs.unlinkSync(graphFile);
+      if (fs.existsSync(reviewFile)) fs.unlinkSync(reviewFile);
       cacheService.clear();
-      mockGraph = new GraphStore();
-      mockReview = new ReviewStore();
+      mockGraph = new GraphStore(graphFile);
+      mockReview = new ReviewStore(reviewFile);
+    });
+
+    afterEach(() => {
+      try {
+        if (fs.existsSync(graphFile)) fs.unlinkSync(graphFile);
+        if (fs.existsSync(reviewFile)) fs.unlinkSync(reviewFile);
+        if (fs.existsSync(testDir)) fs.rmSync(testDir, { recursive: true, force: true });
+      } catch {}
     });
 
     const createCandidates = (count: number, prefix = 'Entity'): ValidatedEntity[] => {

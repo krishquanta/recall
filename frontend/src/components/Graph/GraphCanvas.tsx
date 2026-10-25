@@ -32,6 +32,7 @@ import {
   Network,
   Sparkles,
   Layers,
+  X,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -148,6 +149,9 @@ export const GraphCanvas: React.FC = () => {
   const showEvidence = useAppStore((state) => state.showEvidence);
   const activeDocIds = useAppStore((state) => state.activeDocIds);
   const addToast = useAppStore((state) => state.addToast);
+  const startResearchTask = useAppStore((state) => state.startResearchTask);
+  const isResearching = useAppStore((state) => state.isResearching);
+  const setQueueModalOpen = useAppStore((state) => state.setQueueModalOpen);
 
   const [nodes, setNodes, onNodesChange] = useNodesState<EntityCustomNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -478,6 +482,59 @@ export const GraphCanvas: React.FC = () => {
 
           {/* Relation Curation Popover */}
           {selectedEdge && <RelationCurationPopover />}
+
+          {/* Entity Selection Drawer / Context Card */}
+          {selectedEntity && !selectedEdge && (
+            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 w-full max-w-md bg-white/95 backdrop-blur-md border border-slate-200 rounded-xl shadow-xl p-4 animate-in fade-in slide-in-from-bottom-3 duration-200">
+              <div className="flex items-start justify-between gap-3 mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-slate-800">{selectedEntity.name}</span>
+                  <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-indigo-50 text-indigo-700 border border-indigo-200">
+                    {selectedEntity.type}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => selectEntity(null)}
+                  className="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                  title="Close selection"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {selectedEntity.description && (
+                <p className="text-xs text-slate-600 mb-3 line-clamp-2">
+                  {selectedEntity.description}
+                </p>
+              )}
+
+              <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    startResearchTask(
+                      `Investigate empirical foundations, definitions, and knowledge gaps for ${selectedEntity.name}`
+                    );
+                  }}
+                  disabled={isResearching}
+                  className="flex-1 flex items-center justify-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors disabled:opacity-50"
+                  title="Dispatch autonomous research agent for this entity"
+                >
+                  <Search className="w-3.5 h-3.5" />
+                  <span>{isResearching ? 'Research in Progress...' : '🔍 Investigate Gaps'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setQueueModalOpen(true)}
+                  className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium transition-colors"
+                >
+                  View Queue
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -1,7 +1,21 @@
 import { AuditLogEntry, IAuditService, RollbackResult } from '../types/audit';
 import { AuditStore, auditStore } from '../store/AuditStore';
 import { GraphStore, graphStore } from '../store/GraphStore';
+import { MetadataStore, metadataStore } from '../store/MetadataStore';
+import { VectorStore, vectorStore } from '../store/VectorStore';
+import { KeywordIndex, keywordIndex } from '../store/KeywordIndex';
+import { ContradictionStore } from '../store/ContradictionStore';
 import { RelationshipEdge, EntityNode, ClaimNode } from '../types/graph';
+import fs from 'fs';
+import path from 'path';
+
+let defaultContradictionStore: ContradictionStore | null = null;
+function getDefaultContradictionStore(): ContradictionStore {
+  if (!defaultContradictionStore) {
+    defaultContradictionStore = new ContradictionStore();
+  }
+  return defaultContradictionStore;
+}
 
 export class TopologicalInvariantError extends Error {
   constructor(message: string, public readonly code: string, public readonly details?: any) {
@@ -63,8 +77,16 @@ export class AuditService implements IAuditService {
 
   constructor(
     private auditStoreInstance: AuditStore = auditStore,
-    private graphStoreInstance: GraphStore = graphStore
+    private graphStoreInstance: GraphStore = graphStore,
+    private metadataStoreInstance: MetadataStore = metadataStore,
+    private vectorStoreInstance: VectorStore = vectorStore,
+    private keywordIndexInstance: KeywordIndex = keywordIndex,
+    private contradictionStoreInstance?: ContradictionStore
   ) {}
+
+  private getContradictionStore(): ContradictionStore {
+    return this.contradictionStoreInstance || getDefaultContradictionStore();
+  }
 
   public async recordMutation(
     entry: Omit<AuditLogEntry, 'auditId' | 'timestamp'>
@@ -238,6 +260,98 @@ export class AuditService implements IAuditService {
         throw new AuditEntryAlreadyRolledBackError(
           `Audit entry "${auditId}" has already been rolled back by entry "${targetEntry.rolledBackBy || ''}". To re-apply, rollback entry "${targetEntry.rolledBackBy || ''}".`
         );
+      }
+
+      // Handle Compound Research Import Rollback
+      if (targetEntry.action === 'research_import' || targetEntry.targetType === 'research') {
+        const state = targetEntry.afterState || {};
+        const {
+          addedEntityIds = [],
+          addedRelationIds = [],
+          resolvedContradictionIds = [],
+          researchDocId,
+          filePath,
+        } = state;
+
+        // 1. Remove added edges from GraphStore
+        for (const edgeId of addedRelationIds) {
+          this.graphStoreInstance.deleteEdge(edgeId);
+        }
+
+        // 2. Remove newly added entities from GraphStore
+        for (const entId of addedEntityIds) {
+          this.graphStoreInstance.deleteEntity(entId);
+        }
+
+        // 3. Un-index chunks from VectorStore and KeywordIndex, delete from MetadataStore
+        if (researchDocId) {
+          await this.vectorStoreInstance.deleteByDocId(researchDocId);
+          this.keywordIndexInstance.deleteByDocId(researchDocId);
+          await this.metadataStoreInstance.delete(researchDocId);
+
+          // Clean up any evidence references pointing to this dossier from remaining entities
+          for (const node of this.graphStoreInstance.getAll().nodes) {
+            if (node.evidence && node.evidence.some((ev) => ev.docId === researchDocId)) {
+              node.evidence = node.evidence.filter((ev) => ev.docId !== researchDocId);
+              this.graphStoreInstance.updateEntity(node.id, node);
+            }
+          }
+        }
+
+        // 4. Delete dossier file from uploads/
+        const targetFilePath =
+          filePath ||
+          (researchDocId
+            ? path.join(
+                process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads'),
+                `research_${researchDocId.replace(/^doc_research_/, '')}.md`
+              )
+            : null);
+
+        if (targetFilePath && fs.existsSync(targetFilePath)) {
+          try {
+            fs.unlinkSync(targetFilePath);
+          } catch {
+            // ignore
+          }
+        }
+
+        // 5. Restore resolved contradictions to 'active'
+        const contraStore = this.getContradictionStore();
+        for (const contraId of resolvedContradictionIds) {
+          const alert = contraStore.getAlert(contraId);
+          if (alert) {
+            alert.status = 'active';
+            alert.resolutionNote = undefined;
+            alert.resolvedAt = undefined;
+          }
+        }
+        await contraStore.save();
+
+        // 6. Persist GraphStore
+        await this.graphStoreInstance.save();
+
+        // 7. Append Rollback Audit Entry
+        const rollbackEntry = await this.auditStoreInstance.append({
+          action: 'rollback',
+          targetType: targetEntry.targetType,
+          targetId: targetEntry.targetId,
+          beforeState: targetEntry.afterState,
+          afterState: targetEntry.beforeState,
+          reason: reason || `Rollback of research import ${auditId}`,
+          sourceDocId: targetEntry.sourceDocId,
+          rollbackRefId: auditId,
+        });
+
+        this.auditStoreInstance.markRolledBack(auditId, rollbackEntry.auditId);
+
+        return {
+          success: true,
+          restoredAuditId: auditId,
+          targetId: targetEntry.targetId,
+          targetType: targetEntry.targetType,
+          actionLogged: rollbackEntry,
+        };
       }
 
       // 3. Pre-Flight Topological Validations (Zero Orphan Edges)

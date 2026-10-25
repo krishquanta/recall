@@ -9,6 +9,7 @@ import {
   Settings,
   AlertTriangle,
   History,
+  Search,
 } from 'lucide-react';
 
 export const ChatHeaderWithViewSelector: React.FC = () => {
@@ -18,6 +19,9 @@ export const ChatHeaderWithViewSelector: React.FC = () => {
   const previewChunk = useAppStore((state) => state.previewChunk);
   const documents = useAppStore((state) => state.documents);
   const activeDocIds = useAppStore((state) => state.activeDocIds);
+  const researchGaps = useAppStore((state) => state.researchGaps);
+  const fetchResearchGaps = useAppStore((state) => state.fetchResearchGaps);
+  const setQueueModalOpen = useAppStore((state) => state.setQueueModalOpen);
 
   const contradictions = useGraphStore((state) => state.contradictions);
   const openContradictionDrawer = useGraphStore(
@@ -30,9 +34,13 @@ export const ChatHeaderWithViewSelector: React.FC = () => {
 
   useEffect(() => {
     fetchContradictions();
-    const interval = setInterval(fetchContradictions, 30000);
+    fetchResearchGaps();
+    const interval = setInterval(() => {
+      fetchContradictions();
+      fetchResearchGaps();
+    }, 30000);
     return () => clearInterval(interval);
-  }, [fetchContradictions]);
+  }, [fetchContradictions, fetchResearchGaps]);
 
   const scopeLabel =
     activeDocIds.length === 0
@@ -87,6 +95,25 @@ export const ChatHeaderWithViewSelector: React.FC = () => {
             </span>
           </button>
         )}
+
+        {/* Research Gaps Button */}
+        <button
+          onClick={() => setQueueModalOpen(true)}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold transition-colors shadow-2xs ${
+            researchGaps.length > 0
+              ? 'bg-blue-50 text-blue-700 border border-blue-300 hover:bg-blue-100'
+              : 'text-slate-600 hover:text-slate-800 hover:bg-slate-100'
+          }`}
+          title={`${researchGaps.length} knowledge gap${
+            researchGaps.length === 1 ? '' : 's'
+          } detected`}
+        >
+          <Search className="w-3.5 h-3.5 text-blue-600" />
+          <span className="hidden sm:inline">Gaps</span>
+          <span className="inline-flex items-center justify-center px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-blue-200 text-blue-800">
+            {researchGaps.length}
+          </span>
+        </button>
 
         {/* Audit / Version History Button */}
         <button

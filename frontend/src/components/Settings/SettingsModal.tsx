@@ -13,7 +13,9 @@ import {
   AlertCircle,
   Activity,
   Layers,
+  Globe,
 } from 'lucide-react';
+import { ResearchSettingsTab } from '../Research/ResearchSettingsTab';
 
 export interface KeyStatusItem {
   keyId: string;
@@ -56,6 +58,8 @@ export const SettingsModal: React.FC = () => {
   const [isAdding, setIsAdding] = useState<boolean>(false);
   const [addError, setAddError] = useState<string | null>(null);
   const [addSuccess, setAddSuccess] = useState<string | null>(null);
+
+  const [settingsTab, setSettingsTab] = useState<'api' | 'research'>('api');
 
   const fetchSettings = useCallback(async () => {
     setIsLoading(true);
@@ -220,14 +224,46 @@ export const SettingsModal: React.FC = () => {
           </div>
         </div>
 
+        {/* Tab switcher */}
+        <div className="flex border-b border-slate-200 bg-slate-50/50 px-5 gap-4">
+          <button
+            type="button"
+            onClick={() => setSettingsTab('api')}
+            className={`py-2.5 text-xs font-semibold border-b-2 transition-colors flex items-center gap-1.5 ${
+              settingsTab === 'api'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Key className="w-3.5 h-3.5" />
+            <span>API Keys & Cache</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setSettingsTab('research')}
+            className={`py-2.5 text-xs font-semibold border-b-2 transition-colors flex items-center gap-1.5 ${
+              settingsTab === 'research'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-500 hover:text-slate-800'
+            }`}
+          >
+            <Globe className="w-3.5 h-3.5" />
+            <span>Research & Sources</span>
+          </button>
+        </div>
+
         {/* Scrollable Body */}
         <div className="p-5 flex-1 overflow-y-auto space-y-5">
-          {fetchError && (
-            <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2 text-xs text-red-700">
-              <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-500" />
-              <span>{fetchError}</span>
-            </div>
-          )}
+          {settingsTab === 'research' ? (
+            <ResearchSettingsTab />
+          ) : (
+            <>
+              {fetchError && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl flex items-center gap-2 text-xs text-red-700">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0 text-red-500" />
+                  <span>{fetchError}</span>
+                </div>
+              )}
 
           {/* Section 1: Cache Performance & Savings */}
           <div className="space-y-2.5">
@@ -413,6 +449,8 @@ export const SettingsModal: React.FC = () => {
               )}
             </form>
           </div>
+            </>
+          )}
         </div>
 
         {/* Footer */}

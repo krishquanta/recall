@@ -9,6 +9,7 @@ import {
   Clock,
   AlertCircle,
   Sparkles,
+  Globe,
 } from 'lucide-react';
 import { Document } from '../../types';
 import { DocumentContextMenu } from './DocumentContextMenu';
@@ -57,7 +58,10 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
   let FileIcon = FileText;
   let iconColor = 'text-indigo-600 bg-indigo-50';
 
-  if (ext === 'pdf') {
+  if (document.sourceType === 'web') {
+    FileIcon = Globe;
+    iconColor = 'text-sky-600 bg-sky-50';
+  } else if (ext === 'pdf') {
     FileIcon = FileText;
     iconColor = 'text-rose-600 bg-rose-50';
   } else if (['docx', 'doc', 'odt', 'rtf'].includes(ext)) {
@@ -199,6 +203,17 @@ export const DocumentCard: React.FC<DocumentCardProps> = ({
             >
               <Sparkles className="w-2.5 h-2.5 text-purple-600" />
               🖼 OCR
+            </span>
+          )}
+
+          {/* Web Dossier Badge */}
+          {document.sourceType === 'web' && (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-sky-50 text-sky-700 border border-sky-200 shadow-xs"
+              title={document.sourceUrl ? `Imported from ${document.sourceUrl}` : 'Web Research Dossier'}
+            >
+              <Globe className="w-2.5 h-2.5 text-sky-600" />
+              Web Dossier
             </span>
           )}
         </div>

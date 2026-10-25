@@ -75,6 +75,10 @@ export class VectorStore {
     await this.persist();
   }
 
+  public async addAll(records: VectorRecord[]): Promise<void> {
+    return this.upsertBatch(records);
+  }
+
   public async deleteByDocId(docId: string): Promise<void> {
     if (!this.isLoaded) this.load();
     let changed = false;
